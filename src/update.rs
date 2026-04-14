@@ -1,21 +1,153 @@
+//! # VPN Update Checker Module
+//!
+//! This module checks for application updates from GitHub releases.
+//! It notifies users when a new version is available for download.
+//!
+//! ## Networking Concepts
+//!
+/// The update checker uses HTTP to:
+/// 1. Fetch GitHub releases API
+/// 2. Parse JSON response with version information
+/// 3. Compare current version with latest release
+/// 4. Notify user if newer version is available
+///
+/// ### HTTP Requests
+///
+/// The update checker makes HTTP GET requests to:
+/// - GitHub API: `https://api.github.com/repos/owner/repo/releases/latest`
+/// 
+/// This is a standard REST API call that returns JSON data about the
+/// latest release including version number, release notes, and download URLs.
+///
+/// ### Version Comparison
+///
+/// Versions are compared using semantic versioning (SemVer):
+/// - Format: MAJOR.MINOR.PATCH (e.g., 0.1.0)
+/// - MAJOR: Incompatible API changes
+/// - MINOR: Backwards-compatible functionality
+/// - PATCH: Backwards-compatible bug fixes
+///
+/// Example comparison:
+/// - 0.1.0 < 0.2.0 (newer minor version)
+/// - 0.1.0 < 0.1.1 (newer patch version)
+/// - 1.0.0 > 0.9.9 (newer major version)
+
 use anyhow::Result;
 
+/// VPN Application Update Checker
+///
+/// Monitors GitHub releases for new versions of the VPN application.
+/// Checks periodically and notifies users when updates are available.
+///
+/// ## Networking Relevance
+///
+/// The update checker:
+/// - Makes HTTP requests to GitHub API
+/// - Parses JSON responses with version information
+/// - Compares versions to detect updates
+/// - Does not affect VPN tunnel operations
+///
+/// This is a background task that runs independently of VPN networking.
 pub struct UpdateChecker {
-    current_version: String,
+    /// The current version of the VPN application
+    /// 
+    /// Stored as a string in semantic versioning format (e.g., "0.1.0").
+    /// This is compared against the latest version from GitHub to determine
+    /// if an update is available.
+    current_application_version_string: String,
 }
 
 impl UpdateChecker {
+    /// Creates a new update checker
+    /// 
+    /// Initializes the checker with the current application version.
+    /// This version will be compared against the latest release from GitHub.
+    /// 
+    /// ## Networking Context
+    /// 
+    /// The update checker is created during application initialization.
+    /// It does not perform any network operations until `check_for_updates()`
+    /// is called.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `version` - Current application version string (e.g., "0.1.0")
+    /// 
+    /// # Returns
+    /// 
+    /// New UpdateChecker instance
     pub fn new(version: String) -> Self {
         Self {
-            current_version: version,
+            current_application_version_string: version,
         }
     }
 
+    /// Returns the current application version
+    /// 
+    /// Provides access to the version string for display or comparison purposes.
+    /// 
+    /// # Returns
+    /// 
+    /// Reference to the current version string
     pub fn current_version(&self) -> &str {
-        &self.current_version
+        &self.current_application_version_string
     }
 
+    /// Checks for available updates from GitHub releases
+    /// 
+    /// Makes an HTTP request to the GitHub API to fetch the latest release
+    /// information, then compares it with the current version.
+    /// 
+    /// ## Networking Details
+    /// 
+    /// This method performs:
+    /// 1. HTTP GET request to GitHub releases API
+    /// 2. JSON response parsing
+    /// 3. Version string comparison
+    /// 4. Returns latest version if newer than current
+    /// 
+    /// ### GitHub API Endpoint
+    /// 
+    /// `https://api.github.com/repos/owner/repo/releases/latest`
+    /// 
+    /// Response format (simplified):
+    /// ```json
+    /// {
+    ///   "tag_name": "v0.2.0",
+    ///   "name": "RustVPN 0.2.0",
+    ///   "body": "Release notes...",
+    ///   "html_url": "https://github.com/owner/repo/releases/tag/v0.2.0"
+    /// }
+    /// ```
+    /// 
+    /// ### Version Comparison
+    /// 
+    /// Uses semantic versioning comparison:
+    /// - Extract version numbers (MAJOR.MINOR.PATCH)
+    /// - Compare each component numerically
+    /// - Return latest if any component is greater
+    /// 
+    /// ## Future Implementation
+    /// 
+    /// Currently returns None (no update). Future implementation will:
+    /// 1. Make HTTP request to GitHub API
+    /// 2. Parse JSON response
+    /// 3. Extract version from "tag_name" field
+    /// 4. Compare with current version
+    /// 5. Return latest version if newer
+    /// 
+    /// # Returns
+    /// 
+    /// * `Ok(Some(version))` - Latest version string if update available
+    /// * `Ok(None)` - No update available
+    /// * `Err(_)` - Network error or API failure
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
+        // TODO: Implement actual update checking
+        // 1. Make HTTP GET request to GitHub releases API
+        // 2. Parse JSON response
+        // 3. Extract version from tag_name
+        // 4. Compare with current version using SemVer
+        // 5. Return latest version if newer
         Ok(None)
     }
 }
