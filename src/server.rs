@@ -5,8 +5,8 @@
 //!
 //! ## Networking Concepts
 //!
-### VPN Server Selection
-//!
+/// VPN Server Selection
+///
 /// VPN servers are located around the world in different geographic regions.
 /// Server selection affects:
 ///
@@ -15,7 +15,7 @@
 /// - **Performance**: Server load affects connection quality
 /// - **Content Access**: Some content is geo-restricted to certain regions
 ///
-/// ### Server Information Required
+/// Server Information Required
 ///
 /// Each VPN server needs:
 ///
@@ -39,6 +39,14 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+
+/// Server configuration file format for TOML parsing
+#[derive(Debug, Deserialize)]
+struct ServerConfig {
+    servers: Vec<Server>,
+}
 
 /// VPN Server Configuration
 ///
@@ -153,32 +161,63 @@ pub struct ServerManager {
 }
 
 impl ServerManager {
-    /// Creates a new server manager
+    /// Creates a new server manager and loads servers from configuration
     /// 
-    /// Initializes an empty server list. Servers must be loaded from
-    /// configuration before the manager can be used for server selection.
+    /// Loads the server list from the configuration file (servers.toml)
+    /// and initializes the server manager with the available servers.
     /// 
     /// ## Networking Context
     /// 
-    /// Server manager creation occurs during application initialization,
-    /// before any network operations. The empty list is populated later
-    /// by loading servers from a configuration file.
+    /// Server manager creation occurs during application initialization.
+    /// The server list is loaded from the configuration file and used
+    /// to populate the GUI dropdown and for server selection.
     /// 
-    /// ## Future Implementation
+    /// ## Configuration File Location
     /// 
-    /// Currently creates empty list. Future implementation will:
-    /// 1. Load servers from configuration file (servers.toml)
-    /// 2. Parse server list
-    /// 3. Validate server endpoints and keys
-    /// 4. Return populated ServerManager
+    /// The server configuration file is located at:
+    /// - Linux/macOS: `/etc/rustvpn/servers.toml` or `resources/servers.toml`
+    /// - Windows: `C:\\ProgramData\\RustVPN\\servers.toml` or `resources\\servers.toml`
+    /// 
+    /// Fallback to `resources/servers.toml` in the application directory
+    /// if system-wide configuration is not found.
     /// 
     /// # Returns
     /// 
-    /// * `Ok(ServerManager)` - New server manager (initially empty)
-    /// * `Err(_)` - If server configuration cannot be loaded
+    /// * `Ok(ServerManager)` - New server manager with loaded servers
+    /// * `Err(_)` - If server configuration cannot be loaded or parsed
     pub fn new() -> Result<Self> {
+        // Try to load from system-wide configuration first
+        let config_paths = vec![
+            // System-wide locations
+            Path::new("/etc/rustvpn/servers.toml"),
+            Path::new("C:\\ProgramData\\RustVPN\\servers.toml"),
+            // Fallback to resources directory
+            Path::new("resources/servers.toml"),
+        ];
+        
+        let mut servers = Vec::new();
+        
+        for config_path in config_paths {
+            if let Ok(config_content) = fs::read_to_string(config_path) {
+                match toml::from_str::<ServerConfig>(&config_content) {
+                    Ok(config) => {
+                        servers = config.servers;
+                        tracing::info!("Loaded {} servers from {}", servers.len(), config_path.display());
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse server config from {}: {}", config_path.display(), e);
+                    }
+                }
+            }
+        }
+        
+        if servers.is_empty() {
+            tracing::warn!("No servers loaded from configuration, using empty list");
+        }
+        
         Ok(Self {
-            available_vpn_servers_list: Vec::new(),
+            available_vpn_servers_list: servers,
         })
     }
 

@@ -33,6 +33,17 @@
 /// - 1.0.0 > 0.9.9 (newer major version)
 
 use anyhow::Result;
+use serde::Deserialize;
+
+/// GitHub API response for latest release
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    #[allow(dead_code)]
+    name: String,
+    #[allow(dead_code)]
+    html_url: String,
+}
 
 /// VPN Application Update Checker
 ///
@@ -127,27 +138,64 @@ impl UpdateChecker {
     /// - Compare each component numerically
     /// - Return latest if any component is greater
     /// 
-    /// ## Future Implementation
-    /// 
-    /// Currently returns None (no update). Future implementation will:
-    /// 1. Make HTTP request to GitHub API
-    /// 2. Parse JSON response
-    /// 3. Extract version from "tag_name" field
-    /// 4. Compare with current version
-    /// 5. Return latest version if newer
-    /// 
     /// # Returns
     /// 
     /// * `Ok(Some(version))` - Latest version string if update available
     /// * `Ok(None)` - No update available
     /// * `Err(_)` - Network error or API failure
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
-        // TODO: Implement actual update checking
-        // 1. Make HTTP GET request to GitHub releases API
-        // 2. Parse JSON response
-        // 3. Extract version from tag_name
-        // 4. Compare with current version using SemVer
-        // 5. Return latest version if newer
-        Ok(None)
+        // GitHub API endpoint for latest release
+        // Note: Replace 'owner/repo' with actual repository
+        let api_url = "https://api.github.com/repos/owner/repo/releases/latest";
+        
+        // Make HTTP GET request
+        let client = reqwest::Client::new();
+        let response = client
+            .get(api_url)
+            .header("User-Agent", "RustVPN")
+            .send()
+            .await?;
+        
+        // Parse JSON response
+        let release: GitHubRelease = response.json().await?;
+        
+        // Extract version from tag_name (remove 'v' prefix if present)
+        let latest_version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
+        
+        // Compare versions
+        if Self::is_newer_version(latest_version, &self.current_application_version_string) {
+            tracing::info!("New version available: {} (current: {})", latest_version, self.current_application_version_string);
+            Ok(Some(latest_version.to_string()))
+        } else {
+            tracing::debug!("No update available (current: {}, latest: {})", self.current_application_version_string, latest_version);
+            Ok(None)
+        }
+    }
+    
+    /// Compares two version strings to determine if the second is newer
+    /// 
+    /// Uses semantic versioning comparison (MAJOR.MINOR.PATCH).
+    /// Returns true if version_b is newer than version_a.
+    fn is_newer_version(version_a: &str, version_b: &str) -> bool {
+        let parse_version = |v: &str| -> Vec<u32> {
+            v.split('.')
+                .map(|part| part.parse::<u32>().unwrap_or(0))
+                .collect()
+        };
+        
+        let parts_a = parse_version(version_a);
+        let parts_b = parse_version(version_b);
+        
+        // Compare each component
+        for (a, b) in parts_a.iter().zip(parts_b.iter()) {
+            if b > a {
+                return true;
+            } else if b < a {
+                return false;
+            }
+        }
+        
+        // If all compared components are equal, the longer version is newer
+        parts_b.len() > parts_a.len()
     }
 }

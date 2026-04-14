@@ -15,8 +15,8 @@
 /// - **server**: VPN server selection and management
 /// - **update**: Application update checking
 ///
-//! ## Networking Architecture
-//!
+/// ## Networking Architecture
+///
 /// The VPN is implemented as a layered architecture:
 ///
 /// ```text
@@ -35,14 +35,14 @@
 /// Network Interface
 ///     │ Actual network I/O
 /// ```
-//!
-//! ## Security Features
-//!
+///
+/// ## Security Features
+///
 /// - Zero-logging architecture (no connection data stored)
 /// - WireGuard protocol (modern, secure, lightweight)
 /// - Kill switch (prevents IP/DNS leaks)
 /// - DNS filtering (blocks ads/malware)
-//! - Auto-reconnect (automatic recovery from failures)
+/// - Auto-reconnect (automatic recovery from failures)
 
 /// Core VPN functionality module
 /// 

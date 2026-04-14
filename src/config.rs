@@ -34,6 +34,8 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 /// VPN Configuration Structure
 ///
@@ -127,6 +129,44 @@ impl Default for VpnConfig {
 }
 
 impl VpnConfig {
+    /// Gets the platform-specific configuration file path
+    /// 
+    /// Returns the appropriate configuration directory for the current platform:
+    /// - Linux: ~/.config/rustvpn/config.toml
+    /// - macOS: ~/Library/Application Support/RustVPN/config.toml
+    /// - Windows: %APPDATA%\RustVPN\config.toml
+    fn get_config_path() -> PathBuf {
+        #[cfg(target_os = "linux")]
+        {
+            let mut path = std::env::var("HOME")
+                .unwrap_or_else(|_| ".".to_string());
+            path.push_str("/.config/rustvpn/config.toml");
+            PathBuf::from(path)
+        }
+        
+        #[cfg(target_os = "macos")]
+        {
+            let mut path = std::env::var("HOME")
+                .unwrap_or_else(|_| ".".to_string());
+            path.push_str("/Library/Application Support/RustVPN/config.toml");
+            PathBuf::from(path)
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            let mut path = std::env::var("APPDATA")
+                .unwrap_or_else(|_| ".".to_string());
+            path.push_str("\\RustVPN\\config.toml");
+            PathBuf::from(path)
+        }
+        
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            // Fallback for other platforms
+            PathBuf::from("config.toml")
+        }
+    }
+    
     /// Loads VPN configuration from disk.
     /// 
     /// This method reads the configuration file from the platform-specific location
@@ -149,28 +189,32 @@ impl VpnConfig {
     /// - **macOS**: `~/Library/Application Support/RustVPN/config.toml`
     /// - **Windows**: `%APPDATA%\RustVPN\config.toml`
     /// 
-    /// ## Future Implementation
-    /// 
-    /// Currently returns default configuration. Future implementation will:
-    /// 1. Determine platform-specific config path
-    /// 2. Read file contents
-    /// 3. Parse TOML using serde
-    /// 4. Validate configuration values
-    /// 5. Return parsed configuration or default on error
-    /// 
     /// # Returns
     /// 
     /// * `Ok(VpnConfig)` - Loaded or default configuration
     /// * `Err(_)` - If configuration file is corrupted (returns default)
     pub fn load() -> Result<Self> {
-        // TODO: Implement actual file loading
-        // 1. Get platform-specific config directory
-        // 2. Check if config file exists
-        // 3. Read file contents
-        // 4. Parse TOML
-        // 5. Validate configuration
-        // 6. Return configuration or default
-        Ok(Self::default())
+        let config_path = Self::get_config_path();
+        
+        // Try to read the configuration file
+        match fs::read_to_string(&config_path) {
+            Ok(content) => {
+                match toml::from_str::<VpnConfig>(&content) {
+                    Ok(config) => {
+                        tracing::info!("Loaded configuration from {}", config_path.display());
+                        Ok(config)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse configuration from {}: {}, using defaults", config_path.display(), e);
+                        Ok(Self::default())
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::info!("Configuration file not found at {}, using defaults", config_path.display());
+                Ok(Self::default())
+            }
+        }
     }
 
     /// Saves VPN configuration to disk.
@@ -191,29 +235,51 @@ impl VpnConfig {
     /// 
     /// ## Security Considerations
     /// 
-    /// Configuration files should be protected with appropriate permissions:
+    /// Configuration files are protected with appropriate permissions:
     /// - Read/write for owner only (mode 0600 on Unix)
     /// - No access for group or others
     /// - Prevents other users from reading VPN preferences
-    /// 
-    /// ## Future Implementation
-    /// 
-    /// Currently does nothing. Future implementation will:
-    /// 1. Create platform-specific config directory if needed
-    /// 2. Serialize configuration to TOML using serde
-    /// 3. Write to config file with atomic write (write temp, then rename)
-    /// 4. Set appropriate file permissions
     /// 
     /// # Returns
     /// 
     /// * `Ok(())` - Configuration saved successfully
     /// * `Err(_)` - If unable to write configuration file
     pub fn save(&self) -> Result<()> {
-        // TODO: Implement actual file saving
-        // 1. Ensure config directory exists
-        // 2. Serialize to TOML
-        // 3. Write atomically (temp file + rename)
-        // 4. Set appropriate permissions (0600)
+        let config_path = Self::get_config_path();
+        
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Serialize configuration to TOML
+        let toml_content = toml::to_string_pretty(self)?;
+        
+        // Write configuration file (atomic write on Unix-like systems)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            
+            // Write to temporary file first
+            let temp_path = config_path.with_extension("tmp");
+            fs::write(&temp_path, &toml_content)?;
+            
+            // Set permissions to 0600 (read/write for owner only)
+            let mut perms = fs::metadata(&temp_path)?.permissions();
+            perms.set_mode(0o600);
+            fs::set_permissions(&temp_path, perms)?;
+            
+            // Atomic rename
+            fs::rename(&temp_path, &config_path)?;
+        }
+        
+        #[cfg(not(unix))]
+        {
+            // On Windows, just write directly (atomic rename not available)
+            fs::write(&config_path, &toml_content)?;
+        }
+        
+        tracing::info!("Saved configuration to {}", config_path.display());
         Ok(())
     }
 }

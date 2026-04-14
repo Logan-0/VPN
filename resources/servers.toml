@@ -1,0 +1,74 @@
+# RustVPN Server Configuration
+# This file contains the list of available VPN servers
+
+[[servers]]
+server_identifier = "us-california-1"
+server_display_name = "US-California-1"
+server_country_code = "US"
+server_state_name = "California"
+server_endpoint_address = "203.0.113.1:51820"
+server_public_key_base64 = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk="
+
+[[servers]]
+server_identifier = "us-new-york-1"
+server_display_name = "US-NewYork-1"
+server_country_code = "US"
+server_state_name = "New York"
+server_endpoint_address = "203.0.113.2:51820"
+server_public_key_base64 = "BIr9J3xutjF2FzQcYRLgG4M9uZmzJQN8w7yXZqH2X1E="
+
+[[servers]]
+server_identifier = "us-texas-1"
+server_display_name = "US-Texas-1"
+server_country_code = "US"
+server_state_name = "Texas"
+server_endpoint_address = "203.0.113.3:51820"
+server_public_key_base64 = "C8s9K4yvuG3H2AzRdSHkH5N0a1n4K9O8w7yXZqH2X1F="
+
+[[servers]]
+server_identifier = "us-florida-1"
+server_display_name = "US-Florida-1"
+server_country_code = "US"
+server_state_name = "Florida"
+server_endpoint_address = "203.0.113.4:51820"
+server_public_key_base64 = "D9t0L5zwvH4I3B2SeTIL6O1b2o5L0P9x8z0YKrI3Y2G="
+
+[[servers]]
+server_identifier = "sweden-stockholm-1"
+server_display_name = "Sweden-Stockholm-1"
+server_country_code = "SE"
+server_state_name = "Stockholm"
+server_endpoint_address = "203.0.113.10:51820"
+server_public_key_base64 = "E0u1M6axwI5J4C3TfUJM7P2c3p6M1Q0y9a1LsJ4K3H2"
+
+[[servers]]
+server_identifier = "sweden-goteborg-1"
+server_display_name = "Sweden-Gothenburg-1"
+server_country_code = "SE"
+server_state_name = "Gothenburg"
+server_endpoint_address = "203.0.113.11:51820"
+server_public_key_base64 = "F1v2N7byxJ6K5D4UgVKN8Q3d4q7N2R1z0b2MtK5L4I3"
+
+[[servers]]
+server_identifier = "sweden-malmo-1"
+server_display_name = "Sweden-Malmö-1"
+server_country_code = "SE"
+server_state_name = "Malmö"
+server_endpoint_address = "203.0.113.12:51820"
+server_public_key_base64 = "G2w3O8czK7L6E5VhWLO9R4e5r8O3S2a1c3NuL6M5J4"
+
+[[servers]]
+server_identifier = "germany-berlin-1"
+server_display_name = "Germany-Berlin-1"
+server_country_code = "DE"
+server_state_name = "Berlin"
+server_endpoint_address = "203.0.113.20:51820"
+server_public_key_base64 = "H3x4P9daL8M7F6WiXMP0S5f6s9P4T3b2d4OvM7N6K5"
+
+[[servers]]
+server_identifier = "germany-frankfurt-1"
+server_display_name = "Germany-Frankfurt-1"
+server_country_code = "DE"
+server_state_name = "Frankfurt"
+server_endpoint_address = "203.0.113.21:51820"
+server_public_key_base64 = "I4y5Q0ebM9N8G7XjYNQ1T6g7t0Q5U4c3e5PwN8O7L6"
