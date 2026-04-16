@@ -9,12 +9,13 @@
 /// The GUI itself doesn't directly handle networking, but it:
 /// - Displays VPN connection state (Connected/Disconnected/Connecting)
 /// - Shows server information (IP, location)
-/// - Allows user to control networking features (kill switch, etc.)
+/// - Allows user to control networking features (kill switch, auto-reconnect, DNS filtering)
 /// - Displays uptime and connection statistics
 ///
-/// The GUI communicates with the VPN core through state management.
-/// When the user clicks "Connect", the GUI triggers the VPN tunnel connection.
-/// When the VPN state changes, the GUI updates to reflect the current status.
+/// User preferences are loaded from `VpnConfig` on startup and persisted on every
+/// change. The server list is populated dynamically from `ServerManager` /
+/// `resources/servers.toml`. The connect/disconnect button currently only updates
+/// GUI state; tunnel integration is pending.
 
 use gtk4::prelude::*;
 use gtk4::{
@@ -23,6 +24,8 @@ use gtk4::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::config::VpnConfig;
+use crate::server::ServerManager;
 
 /// VPN Connection State
 ///
@@ -74,64 +77,57 @@ pub enum ConnectionState {
 
 /// Main VPN Application State
 ///
-/// Contains the application state including connection status and user preferences.
-/// This state is shared between the GUI and the VPN core components.
+/// Holds the live runtime state of the VPN connection for use in GTK4 callbacks.
+/// User preferences (kill switch, auto-reconnect, DNS filtering, server selection)
+/// are managed directly through `VpnConfig` in `build_ui` and are not sourced
+/// from the fields below at runtime.
 ///
-/// ## Networking Relevance
+/// ## Fields
 ///
-/// The application state controls VPN networking behavior:
-/// - `current_vpn_connection_state`: Determines if VPN tunnel is active
-/// - `kill_switch_protection_enabled`: Controls firewall rule activation
-/// - `auto_reconnect_enabled`: Controls automatic reconnection on failure
-/// - `dns_filtering_protection_enabled`: Controls DNS query filtering
-///
-/// These settings are toggled by the user and affect how network traffic
-/// is handled when the VPN is active.
+/// - `current_vpn_connection_state`: Live tunnel state, toggled by the
+///   connect/disconnect button and (future) by actual tunnel state events.
+/// - `kill_switch_protection_enabled`: Reserved for future tunnel integration.
+/// - `auto_reconnect_enabled`: Reserved for future tunnel integration.
+/// - `dns_filtering_protection_enabled`: Reserved for future tunnel integration.
 pub struct VpnApp {
-    /// Current VPN connection state (thread-safe reference)
+    /// Current VPN connection state
     /// 
-    /// Uses Rc<RefCell> for interior mutability, allowing the GUI
-    /// to update the state from callbacks. The state is shared
-    /// with the VPN core to synchronize connection status.
+    /// Uses `Rc<RefCell>` for interior mutability so GTK4 callbacks can update
+    /// the state without requiring `Send`. Updated by the connect/disconnect
+    /// button and, in the future, by actual tunnel state change events.
     pub current_vpn_connection_state: Rc<RefCell<ConnectionState>>,
     
-    /// Kill switch protection enabled state
+    /// Kill switch enabled flag
     /// 
-    /// When true, the kill switch is activated before connecting
-    /// and blocks all non-VPN traffic when disconnected.
-    /// This prevents IP address leaks.
+    /// Reserved for future use when the GUI is wired to the `KillSwitch` core.
+    /// The current GUI reads this setting from `VpnConfig` directly.
     pub kill_switch_protection_enabled: Rc<RefCell<bool>>,
     
-    /// Auto-reconnect enabled state
+    /// Auto-reconnect enabled flag
     /// 
-    /// When true, the VPN will automatically attempt to reconnect
-    /// if the connection is lost, using exponential backoff.
+    /// Reserved for future use when the GUI is wired to the `ReconnectManager` core.
+    /// The current GUI reads this setting from `VpnConfig` directly.
     pub auto_reconnect_enabled: Rc<RefCell<bool>>,
     
-    /// DNS filtering protection enabled state
+    /// DNS filtering enabled flag
     /// 
-    /// When true, DNS queries are filtered against blocklists
-    /// and encrypted using DNS-over-HTTPS to prevent DNS leaks.
+    /// Reserved for future use when the GUI is wired to the `DnsFilter` core.
+    /// The current GUI reads this setting from `VpnConfig` directly.
     pub dns_filtering_protection_enabled: Rc<RefCell<bool>>,
 }
 
 impl VpnApp {
-    /// Creates a new VPN application instance with default settings
+    /// Creates a new VPN application instance
     /// 
-    /// Initializes the application state with security-focused defaults:
-    /// - Connection state: Disconnected
-    /// - Kill switch: Enabled (prevents leaks)
-    /// - Auto-reconnect: Enabled (automatic recovery)
-    /// - DNS filtering: Enabled (blocks ads/malware)
-    /// 
-    /// ## Networking Context
-    /// 
-    /// Application creation occurs during GUI initialization.
-    /// The default settings prioritize security and privacy protection.
+    /// Initializes `current_vpn_connection_state` to `Disconnected`. The settings
+    /// fields (`kill_switch_protection_enabled`, etc.) are set to secure defaults
+    /// but are not read by the current UI, which sources those values directly
+    /// from the loaded `VpnConfig` in `build_ui`. They are retained for future
+    /// wiring to the VPN tunnel core.
     /// 
     /// # Returns
     /// 
-    /// New VpnApp instance with default state
+    /// New `VpnApp` instance
     pub fn new() -> Self {
         Self {
             current_vpn_connection_state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
@@ -164,21 +160,28 @@ impl VpnApp {
     /// 6. **Server dropdown**: Selects VPN server from available list
     /// 7. **Settings checkboxes**: Toggle kill switch, auto-reconnect, DNS filtering
     /// 
-    /// ## Future Integration
+    /// ## Implemented
     /// 
-    /// Currently the connect button only updates the GUI state.
-    /// Future implementation will:
-    /// 1. Wire connect button to Tunnel::connect()
-    /// 2. Wire disconnect button to Tunnel::disconnect()
-    /// 3. Update status from actual tunnel state
-    /// 4. Wire settings checkboxes to actual feature toggles
-    /// 5. Load server list from ServerManager
+    /// - Server dropdown populated from `ServerManager` / `resources/servers.toml`
+    /// - Checkboxes initialized from `VpnConfig` loaded from disk at startup
+    /// - All checkbox and server selection changes immediately persisted via `VpnConfig::save`
+    /// 
+    /// ## Pending
+    /// 
+    /// The connect button currently only updates local GUI state. Still needed:
+    /// 1. Wire connect button to `Tunnel::connect()`
+    /// 2. Wire disconnect button to `Tunnel::disconnect()`
+    /// 3. Update status label from actual tunnel state change events
     /// 
     /// # Arguments
     /// 
     /// * `app` - GTK4 Application instance
     pub fn build_ui(app: &Application) {
         let vpn_app = VpnApp::new();
+        let config = VpnConfig::load().unwrap_or_default();
+        let config_rc = Rc::new(RefCell::new(config));
+        let server_manager = ServerManager::new().unwrap();
+        let servers: Vec<_> = server_manager.get_servers().to_vec();
 
         // Create main window
         let main_application_window = ApplicationWindow::builder()
@@ -229,7 +232,7 @@ impl VpnApp {
         let status_label_clone = connection_status_display_label.clone();
         let button_clone = vpn_connection_toggle_button.clone();
         
-        // Button click handler (future: integrate with VPN core)
+        // Button click handler (pending: wire to Tunnel::connect() / Tunnel::disconnect())
         vpn_connection_toggle_button.connect_clicked(move |_| {
             let mut current_state = connection_state_clone.borrow_mut();
             match *current_state {
@@ -256,12 +259,31 @@ impl VpnApp {
         server_selection_header_label.set_markup("<span size='medium' weight='bold'>Select Server:</span>");
         main_vertical_box_container.append(&server_selection_header_label);
 
-        // Server selection dropdown (future: load from ServerManager)
         let server_selection_dropdown = ComboBoxText::new();
-        server_selection_dropdown.append_text("US-California-1");
-        server_selection_dropdown.append_text("US-NewYork-1");
-        server_selection_dropdown.append_text("Sweden-Stockholm-1");
-        server_selection_dropdown.set_active(Some(0));
+        for server in &servers {
+            server_selection_dropdown.append(
+                Some(server.server_identifier.as_str()),
+                &server.server_display_name,
+            );
+        }
+        {
+            let config = config_rc.borrow();
+            if let Some(ref id) = config.selected_vpn_server_identifier {
+                let _ = server_selection_dropdown.set_active_id(Some(id.as_str()));
+            } else {
+                server_selection_dropdown.set_active(Some(0));
+            }
+        }
+        let config_rc_server = config_rc.clone();
+        server_selection_dropdown.connect_changed(move |dropdown| {
+            if let Some(id) = dropdown.active_id() {
+                let mut config = config_rc_server.borrow_mut();
+                config.selected_vpn_server_identifier = Some(id.to_string());
+                if let Err(e) = config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+            }
+        });
         main_vertical_box_container.append(&server_selection_dropdown);
 
         // Settings header
@@ -269,19 +291,40 @@ impl VpnApp {
         vpn_settings_header_label.set_markup("<span size='medium' weight='bold'>Settings:</span>");
         main_vertical_box_container.append(&vpn_settings_header_label);
 
-        // Kill switch checkbox (future: wire to KillSwitch)
         let kill_switch_protection_checkbox = CheckButton::with_label("Kill Switch (blocks traffic when VPN disconnected)");
-        kill_switch_protection_checkbox.set_active(true);
+        kill_switch_protection_checkbox.set_active(config_rc.borrow().kill_switch_protection_enabled);
+        let config_rc_ks = config_rc.clone();
+        kill_switch_protection_checkbox.connect_toggled(move |checkbox| {
+            let mut config = config_rc_ks.borrow_mut();
+            config.kill_switch_protection_enabled = checkbox.is_active();
+            if let Err(e) = config.save() {
+                tracing::warn!("Failed to save config: {}", e);
+            }
+        });
         main_vertical_box_container.append(&kill_switch_protection_checkbox);
 
-        // Auto-reconnect checkbox (future: wire to ReconnectManager)
         let auto_reconnect_protection_checkbox = CheckButton::with_label("Auto-reconnect (automatically reconnect on failure)");
-        auto_reconnect_protection_checkbox.set_active(true);
+        auto_reconnect_protection_checkbox.set_active(config_rc.borrow().auto_reconnect_enabled);
+        let config_rc_ar = config_rc.clone();
+        auto_reconnect_protection_checkbox.connect_toggled(move |checkbox| {
+            let mut config = config_rc_ar.borrow_mut();
+            config.auto_reconnect_enabled = checkbox.is_active();
+            if let Err(e) = config.save() {
+                tracing::warn!("Failed to save config: {}", e);
+            }
+        });
         main_vertical_box_container.append(&auto_reconnect_protection_checkbox);
 
-        // DNS filtering checkbox (future: wire to DnsFilter)
         let dns_filtering_protection_checkbox = CheckButton::with_label("DNS Filtering (block ads and malware)");
-        dns_filtering_protection_checkbox.set_active(true);
+        dns_filtering_protection_checkbox.set_active(config_rc.borrow().dns_filtering_protection_enabled);
+        let config_rc_dns = config_rc.clone();
+        dns_filtering_protection_checkbox.connect_toggled(move |checkbox| {
+            let mut config = config_rc_dns.borrow_mut();
+            config.dns_filtering_protection_enabled = checkbox.is_active();
+            if let Err(e) = config.save() {
+                tracing::warn!("Failed to save config: {}", e);
+            }
+        });
         main_vertical_box_container.append(&dns_filtering_protection_checkbox);
 
         main_application_window.set_child(Some(&main_vertical_box_container));
@@ -308,13 +351,11 @@ impl VpnApp {
     /// 5. Callbacks update state or trigger VPN operations
     /// 6. Loop continues until application exits
     /// 
-    /// # Future Integration
+    /// ## Pending Integration
     /// 
-    /// Future implementation will:
-    /// 1. Load configuration on startup
-    /// 2. Initialize VPN core components
-    /// 3. Wire GUI callbacks to VPN operations
-    /// 4. Handle VPN state changes and update GUI
+    /// 1. Initialize VPN core components (Tunnel, KillSwitch, ReconnectManager)
+    /// 2. Wire GUI callbacks to core operations
+    /// 3. Drive status label updates from tunnel state change events
     pub fn run() {
         let gtk4_application_instance = Application::builder()
             .application_id("com.rustvpn.app")

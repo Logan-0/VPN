@@ -18,7 +18,7 @@
 /// 2. Check for required privileges (root/admin)
 /// 3. Load configuration from disk
 /// 4. Validate configuration values
-/// 5. Check for application updates
+/// 5. Spawn background thread for update check (non-blocking)
 /// 6. Create and run GTK4 application
 /// 7. Build user interface
 /// 8. Wait for user interactions
@@ -83,15 +83,17 @@ fn main() {
         std::process::exit(1);
     }
     
-    // Check for application updates (non-blocking, just logs)
-    let update_checker = UpdateChecker::new(env!("CARGO_PKG_VERSION").to_string());
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async {
-            if let Err(e) = check_updates(&update_checker).await {
-                tracing::warn!("Failed to check for updates: {}", e);
-            }
-        });
+    // Spawn background thread so the update check never delays GUI startup
+    std::thread::spawn(|| {
+        if let Ok(rt) = tokio::runtime::Runtime::new() {
+            let update_checker = UpdateChecker::new(env!("CARGO_PKG_VERSION").to_string());
+            rt.block_on(async {
+                if let Err(e) = check_updates(&update_checker).await {
+                    tracing::warn!("Failed to check for updates: {}", e);
+                }
+            });
+        }
+    });
     
     // Run the GTK4 GUI application
     // The GUI provides user control over VPN networking operations

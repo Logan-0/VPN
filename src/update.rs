@@ -163,7 +163,7 @@ impl UpdateChecker {
         let latest_version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
         
         // Compare versions
-        if Self::is_newer_version(latest_version, &self.current_application_version_string) {
+        if Self::is_newer_version(&self.current_application_version_string, latest_version) {
             tracing::info!("New version available: {} (current: {})", latest_version, self.current_application_version_string);
             Ok(Some(latest_version.to_string()))
         } else {
@@ -172,10 +172,13 @@ impl UpdateChecker {
         }
     }
     
-    /// Compares two version strings to determine if the second is newer
+    /// Compares two version strings to determine if the second is strictly newer than the first
     /// 
     /// Uses semantic versioning comparison (MAJOR.MINOR.PATCH).
-    /// Returns true if version_b is newer than version_a.
+    /// Returns true if version_b is strictly newer than version_a.
+    /// 
+    /// Called as `is_newer_version(current, latest)`, so a `true` return means
+    /// the GitHub release is newer than the currently running version.
     fn is_newer_version(version_a: &str, version_b: &str) -> bool {
         let parse_version = |v: &str| -> Vec<u32> {
             v.split('.')

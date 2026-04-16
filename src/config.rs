@@ -10,6 +10,7 @@
 //!
 //! - **Auto-connect**: Automatically establish VPN tunnel on application startup
 //! - **Kill switch**: Block all non-VPN traffic when disconnected (prevents IP leaks)
+//! - **Auto-reconnect**: Automatically restore the tunnel if the connection drops
 //! - **DNS filtering**: Intercept and filter DNS queries to block ads/malware
 //! - **Selected server**: Which VPN server to connect to (affects latency and jurisdiction)
 //!
@@ -53,13 +54,17 @@ use std::path::PathBuf;
 /// - `kill_switch_protection_enabled`: When enabled, uses platform-specific firewall
 ///   rules to block all non-VPN traffic, preventing IP/DNS leaks if the connection drops.
 ///
+/// - `auto_reconnect_enabled`: When enabled, the reconnect manager automatically
+///   re-establishes the tunnel on failure using exponential backoff.
+///
 /// - `dns_filtering_protection_enabled`: Enables DNS query interception and filtering
 ///   to block requests to known malicious/advertising domains, and uses DNS-over-HTTPS
 ///   to encrypt DNS queries.
 ///
 /// - `selected_vpn_server_identifier`: Determines which VPN server to connect to,
-/// affecting latency, jurisdiction, and privacy characteristics.
+///   affecting latency, jurisdiction, and privacy characteristics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VpnConfig {
     /// Automatically establish VPN connection when application starts
     /// 
@@ -80,6 +85,14 @@ pub struct VpnConfig {
     /// 
     /// This prevents IP address exposure if the VPN connection drops unexpectedly.
     pub kill_switch_protection_enabled: bool,
+    
+    /// Automatically reconnect when VPN connection is lost
+    /// 
+    /// When true, the reconnect manager monitors the tunnel state and automatically
+    /// attempts to re-establish the connection on failure using exponential backoff
+    /// (1s → 2s → 4s → 8s → 16s → 30s max) to avoid hammering the server.
+    /// When false, the user must manually click "Connect" after a dropped connection.
+    pub auto_reconnect_enabled: bool,
     
     /// Enable DNS filtering and DNS-over-HTTPS
     /// 
@@ -108,6 +121,7 @@ impl Default for VpnConfig {
     /// The defaults prioritize security and privacy:
     /// - Auto-connect is disabled (user choice)
     /// - Kill switch is enabled (prevents leaks)
+    /// - Auto-reconnect is enabled (automatic recovery)
     /// - DNS filtering is enabled (blocks ads/malware)
     /// - No server selected (user must choose)
     /// 
@@ -122,6 +136,7 @@ impl Default for VpnConfig {
         Self {
             auto_connect_on_application_startup: false,
             kill_switch_protection_enabled: true,
+            auto_reconnect_enabled: true,
             dns_filtering_protection_enabled: true,
             selected_vpn_server_identifier: None,
         }
@@ -180,8 +195,9 @@ impl VpnConfig {
     /// 
     /// 1. Whether to auto-connect (immediate VPN tunnel establishment)
     /// 2. Whether to enable kill switch (firewall rule configuration)
-    /// 3. Whether to enable DNS filtering (DNS resolver configuration)
-    /// 4. Which server to connect to (affects routing and latency)
+    /// 3. Whether to enable auto-reconnect (reconnect manager behavior)
+    /// 4. Whether to enable DNS filtering (DNS resolver configuration)
+    /// 5. Which server to connect to (affects routing and latency)
     /// 
     /// ## Platform-Specific Paths
     /// 
@@ -228,7 +244,7 @@ impl VpnConfig {
     /// Configuration saving typically occurs:
     /// 1. When user changes settings in the GUI
     /// 2. When user selects a different server
-    /// 3. When user toggles features (kill switch, DNS filtering)
+    /// 3. When user toggles features (kill switch, auto-reconnect, DNS filtering)
     /// 4. On application shutdown (to ensure latest state is saved)
     /// 
     /// Saved settings will be loaded on next startup and applied to network operations.
