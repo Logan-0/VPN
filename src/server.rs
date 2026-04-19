@@ -241,6 +241,64 @@ impl ServerManager {
         &self.available_vpn_servers_list
     }
 
+    /// Finds a server by its unique identifier.
+    /// 
+    /// This is used when loading a saved server selection from configuration
+    /// or when the GUI needs to resolve a server ID back to full server details.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `id` - The unique server identifier (e.g., "us-california-1")
+    /// 
+    /// # Returns
+    /// 
+    /// * `Some(&Server)` - Reference to the matching server
+    /// * `None` - No server found with the given ID
+    pub fn find_by_id(&self, id: &str) -> Option<&Server> {
+        self.available_vpn_servers_list
+            .iter()
+            .find(|s| s.server_identifier == id)
+    }
+
+    /// Finds all servers in a given country.
+    /// 
+    /// Useful for grouping servers by region in the GUI or for selecting
+    /// a server within a specific jurisdiction.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `country_code` - ISO 3166-1 alpha-2 country code (e.g., "US", "SE")
+    /// 
+    /// # Returns
+    /// 
+    /// Vector of references to servers in the specified country
+    pub fn find_by_country(&self, country_code: &str) -> Vec<&Server> {
+        self.available_vpn_servers_list
+            .iter()
+            .filter(|s| s.server_country_code == country_code)
+            .collect()
+    }
+
+    /// Returns display names paired with identifiers for GUI dropdown population.
+    /// 
+    /// Provides a convenient list of (id, display_name) tuples for building
+    /// UI elements like combo boxes and list views.
+    /// 
+    /// # Returns
+    /// 
+    /// Vector of (server_identifier, server_display_name) tuples
+    pub fn get_server_display_list(&self) -> Vec<(&str, &str)> {
+        self.available_vpn_servers_list
+            .iter()
+            .map(|s| (s.server_identifier.as_str(), s.server_display_name.as_str()))
+            .collect()
+    }
+
+    /// Returns the number of loaded servers.
+    pub fn server_count(&self) -> usize {
+        self.available_vpn_servers_list.len()
+    }
+
     /// Selects the best available server
     /// 
     /// Implements server selection logic to choose the optimal server

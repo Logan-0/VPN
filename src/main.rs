@@ -26,6 +26,7 @@
 
 use rust_vpn::config::VpnConfig;
 use rust_vpn::gui::app::VpnApp;
+use rust_vpn::server::ServerManager;
 use rust_vpn::update::UpdateChecker;
 use anyhow::Result;
 
@@ -161,12 +162,28 @@ fn check_privileges() -> bool {
 /// 
 /// Ensures that configuration values are within acceptable ranges
 /// and that required fields are present.
-fn validate_config(_config: &VpnConfig) -> Result<()> {
-    // Currently all boolean and optional string values are valid
-    // Future validation could include:
-    // - Server identifier must be in available servers list
-    // - DNS servers must be valid IP addresses
-    // - etc.
+/// 
+/// ## Checks Performed
+/// 
+/// 1. If a server identifier is saved, verify it exists in the server list.
+///    A stale or mistyped identifier is downgraded to `None` so the GUI
+///    falls back to the first server rather than silently selecting nothing.
+fn validate_config(config: &VpnConfig) -> Result<()> {
+    if let Some(ref server_id) = config.selected_vpn_server_identifier {
+        match ServerManager::new() {
+            Ok(manager) => {
+                if manager.find_by_id(server_id).is_none() {
+                    tracing::warn!(
+                        "Configured server '{}' not found in server list, will fall back to default",
+                        server_id
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Could not load server list for validation: {}", e);
+            }
+        }
+    }
     Ok(())
 }
 

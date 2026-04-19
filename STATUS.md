@@ -1,8 +1,10 @@
 # RustVPN - Project Status
 
-## Current Status: Foundation Complete
+## Current Status: Integration Ready
 
-The VPN foundation is **fully implemented and working** on Linux (Ubuntu). The GUI is rendering perfectly with GTK4.
+All core modules are **implemented and type-check clean**. The GUI is wired to the
+VPN core via a message-passing controller. End-to-end linking requires GTK4 and
+OpenSSL dev libraries to be installed for full binary builds and test execution.
 
 ---
 
@@ -15,12 +17,26 @@ The VPN foundation is **fully implemented and working** on Linux (Ubuntu). The G
 4. **GTK4 GUI** - Cross-platform interface with proper text rendering
 5. **Documentation** - Comprehensive architecture and flow diagrams
 
+### Newly Implemented (Session 2)
+6. **Server Manager** - `find_by_id()`, `find_by_country()`, `get_server_display_list()`
+7. **Config Validation** - `validate_config()` checks selected server ID against server list
+8. **DNS Filter** - HashSet blocklist, hosts-file parser, Pi-hole `ExternalDns` passthrough mode
+9. **DNS Resolver** - Cloudflare DoH, Google DoH, custom DNS server (Pi-hole) via hickory-resolver
+10. **Linux TUN Device** - Create/configure/cleanup using `tun` crate + iproute2 routing
+11. **Packet Processing Loop** - TUN<->UDP bridge with WireGuard encrypt/decrypt + keepalive timer
+12. **VPN Controller** - GUI<->Core message channel (VpnCommand/VpnEvent) with background Tokio worker
+13. **GUI Integration** - Connect/Disconnect button sends commands, 100ms GTK timer polls events
+14. **Test Suite** - Unit tests for DNS filter, server, config, reconnect, tunnel + E2E test plan
+15. **Pi-hole Support** - `custom_dns_server_address` in VpnConfig, `DnsFilterMode::ExternalDns`
+
 ### What You Can Do Right Now
 - Run the GUI application: `cargo run`
 - See the clean interface with all controls
 - Toggle settings (Kill Switch, Auto-reconnect, DNS Filtering)
 - Select servers from dropdown
-- Click Connect/Disconnect button (UI only, not connected to VPN core yet)
+- Click Connect/Disconnect -- sends commands through VpnController to async worker
+- Run unit tests: `cargo test` (requires libgtk-4-dev and libssl-dev)
+- Run E2E tests requiring root: `sudo cargo test --test e2e_test_plan -- --ignored`
 
 ---
 

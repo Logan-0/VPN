@@ -113,6 +113,20 @@ pub struct VpnConfig {
     /// 
     /// None indicates no server has been selected yet.
     pub selected_vpn_server_identifier: Option<String>,
+
+    /// Optional custom DNS server address (e.g., Pi-hole).
+    /// 
+    /// When set, the VPN client delegates DNS resolution and filtering to this
+    /// server instead of using built-in DNS-over-HTTPS and the local blocklist.
+    /// This is useful when a Pi-hole or similar DNS-level ad blocker is running
+    /// on the local network.
+    /// 
+    /// The DNS queries still travel through the encrypted VPN tunnel -- only the
+    /// final resolution is handled by the custom server.
+    /// 
+    /// Format: IPv4 or IPv6 address as a string (e.g., "192.168.1.53").
+    /// None means use the default Cloudflare DoH resolver with built-in filtering.
+    pub custom_dns_server_address: Option<String>,
 }
 
 impl Default for VpnConfig {
@@ -139,6 +153,7 @@ impl Default for VpnConfig {
             auto_reconnect_enabled: true,
             dns_filtering_protection_enabled: true,
             selected_vpn_server_identifier: None,
+            custom_dns_server_address: None,
         }
     }
 }

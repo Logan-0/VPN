@@ -22,9 +22,11 @@ use gtk4::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Label,
     Orientation,
 };
+use gtk4::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::config::VpnConfig;
+use crate::core::controller::{VpnCommand, VpnController, VpnEvent, VpnState};
 use crate::server::ServerManager;
 
 /// VPN Connection State
@@ -183,6 +185,9 @@ impl VpnApp {
         let server_manager = ServerManager::new().unwrap();
         let servers: Vec<_> = server_manager.get_servers().to_vec();
 
+        // Create the VPN controller (spawns async worker thread)
+        let controller = Rc::new(VpnController::new());
+
         // Create main window
         let main_application_window = ApplicationWindow::builder()
             .application(app)
@@ -231,25 +236,89 @@ impl VpnApp {
         let connection_state_clone = vpn_app.current_vpn_connection_state.clone();
         let status_label_clone = connection_status_display_label.clone();
         let button_clone = vpn_connection_toggle_button.clone();
+        let controller_btn = controller.clone();
+        let servers_btn = servers.clone();
+        let config_rc_btn = config_rc.clone();
         
-        // Button click handler (pending: wire to Tunnel::connect() / Tunnel::disconnect())
+        // Button click handler -- sends commands to VPN core worker
         vpn_connection_toggle_button.connect_clicked(move |_| {
             let mut current_state = connection_state_clone.borrow_mut();
             match *current_state {
                 ConnectionState::Disconnected | ConnectionState::Error => {
-                    // TODO: Call Tunnel::connect() here
-                    *current_state = ConnectionState::Connected;
-                    status_label_clone.set_markup("<span size='large' foreground='green'>Status: Connected</span>");
-                    button_clone.set_label("DISCONNECT");
+                    // Determine which server to connect to
+                    let config = config_rc_btn.borrow();
+                    let server = config.selected_vpn_server_identifier
+                        .as_deref()
+                        .and_then(|id| servers_btn.iter().find(|s| s.server_identifier == id))
+                        .or_else(|| servers_btn.first());
+
+                    if let Some(srv) = server {
+                        controller_btn.send_command(VpnCommand::Connect {
+                            server_endpoint: srv.server_endpoint_address.clone(),
+                            server_public_key_base64: srv.server_public_key_base64.clone(),
+                        });
+                        *current_state = ConnectionState::Connecting;
+                        status_label_clone.set_markup("<span size='large' foreground='orange'>Status: Connecting...</span>");
+                        button_clone.set_label("CONNECTING...");
+                    }
                 }
-                ConnectionState::Connected => {
-                    // TODO: Call Tunnel::disconnect() here
+                ConnectionState::Connected | ConnectionState::Connecting => {
+                    controller_btn.send_command(VpnCommand::Disconnect);
                     *current_state = ConnectionState::Disconnected;
                     status_label_clone.set_markup("<span size='large'>Status: Disconnected</span>");
                     button_clone.set_label("CONNECT");
                 }
                 _ => {}
             }
+        });
+
+        // GTK timer to poll VPN events and update the UI (every 100ms)
+        let event_state = vpn_app.current_vpn_connection_state.clone();
+        let event_status_label = connection_status_display_label.clone();
+        let event_button = vpn_connection_toggle_button.clone();
+        let controller_timer = controller.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            while let Some(event) = controller_timer.try_recv_event() {
+                match event {
+                    VpnEvent::StateChanged(state) => {
+                        let mut current = event_state.borrow_mut();
+                        match state {
+                            VpnState::Connected => {
+                                *current = ConnectionState::Connected;
+                                event_status_label.set_markup("<span size='large' foreground='green'>Status: Connected</span>");
+                                event_button.set_label("DISCONNECT");
+                            }
+                            VpnState::Disconnected => {
+                                *current = ConnectionState::Disconnected;
+                                event_status_label.set_markup("<span size='large'>Status: Disconnected</span>");
+                                event_button.set_label("CONNECT");
+                            }
+                            VpnState::Connecting => {
+                                *current = ConnectionState::Connecting;
+                                event_status_label.set_markup("<span size='large' foreground='orange'>Status: Connecting...</span>");
+                                event_button.set_label("CONNECTING...");
+                            }
+                            VpnState::Reconnecting => {
+                                *current = ConnectionState::Reconnecting;
+                                event_status_label.set_markup("<span size='large' foreground='orange'>Status: Reconnecting...</span>");
+                                event_button.set_label("RECONNECTING...");
+                            }
+                            VpnState::Error => {
+                                *current = ConnectionState::Error;
+                                event_status_label.set_markup("<span size='large' foreground='red'>Status: Error</span>");
+                                event_button.set_label("CONNECT");
+                            }
+                        }
+                    }
+                    VpnEvent::Error(msg) => {
+                        tracing::error!("VPN error: {}", msg);
+                    }
+                    VpnEvent::Info(msg) => {
+                        tracing::info!("VPN info: {}", msg);
+                    }
+                }
+            }
+            glib::ControlFlow::Continue
         });
 
         main_vertical_box_container.append(&vpn_connection_toggle_button);
@@ -294,24 +363,30 @@ impl VpnApp {
         let kill_switch_protection_checkbox = CheckButton::with_label("Kill Switch (blocks traffic when VPN disconnected)");
         kill_switch_protection_checkbox.set_active(config_rc.borrow().kill_switch_protection_enabled);
         let config_rc_ks = config_rc.clone();
+        let controller_ks = controller.clone();
         kill_switch_protection_checkbox.connect_toggled(move |checkbox| {
+            let active = checkbox.is_active();
             let mut config = config_rc_ks.borrow_mut();
-            config.kill_switch_protection_enabled = checkbox.is_active();
+            config.kill_switch_protection_enabled = active;
             if let Err(e) = config.save() {
                 tracing::warn!("Failed to save config: {}", e);
             }
+            controller_ks.send_command(VpnCommand::SetKillSwitch(active));
         });
         main_vertical_box_container.append(&kill_switch_protection_checkbox);
 
         let auto_reconnect_protection_checkbox = CheckButton::with_label("Auto-reconnect (automatically reconnect on failure)");
         auto_reconnect_protection_checkbox.set_active(config_rc.borrow().auto_reconnect_enabled);
         let config_rc_ar = config_rc.clone();
+        let controller_ar = controller.clone();
         auto_reconnect_protection_checkbox.connect_toggled(move |checkbox| {
+            let active = checkbox.is_active();
             let mut config = config_rc_ar.borrow_mut();
-            config.auto_reconnect_enabled = checkbox.is_active();
+            config.auto_reconnect_enabled = active;
             if let Err(e) = config.save() {
                 tracing::warn!("Failed to save config: {}", e);
             }
+            controller_ar.send_command(VpnCommand::SetAutoReconnect(active));
         });
         main_vertical_box_container.append(&auto_reconnect_protection_checkbox);
 
