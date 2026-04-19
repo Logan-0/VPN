@@ -86,7 +86,7 @@ Network Interface
 | Kill switch | `src/core/killswitch.rs` | Firewall rules that block non-VPN traffic |
 | Auto-reconnect | `src/core/reconnect.rs` | Exponential backoff reconnection logic |
 | DNS filtering | `src/dns/` | Intercepts DNS queries, checks blocklists, uses DoH |
-| GUI | `src/gui/app.rs` | GTK4 graphical interface (connect button, server picker, toggles) |
+| GUI | `src/gui/app.rs` | Iced graphical interface -- Elm architecture (connect button, server picker, toggles) |
 | Linux platform | `src/platform/linux.rs` | `ip tuntap`, `iptables`, routing tables |
 | macOS platform | `src/platform/macos.rs` | `utun` device, `pf` firewall, routing |
 | Windows platform | `src/platform/windows.rs` | WinTun driver, Windows Firewall |
@@ -208,7 +208,7 @@ The other blocks are completely ignored by the compiler.
 - **DNS Filtering**: Blocklist-based ad and malware blocking over DoH/DoT
 - **Auto-Reconnect**: Exponential backoff reconnection with no user intervention
 - **Cross-Platform**: Linux, macOS, and Windows from a single codebase
-- **GUI**: GTK4 graphical interface with connect button, server picker, and feature toggles
+- **GUI**: Iced graphical interface (pure Rust, Elm architecture) with connect button, server picker, and feature toggles
 
 ## Server Coverage
 

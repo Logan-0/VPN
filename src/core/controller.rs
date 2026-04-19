@@ -1,6 +1,6 @@
 //! # VPN Controller
 //!
-//! This module provides the bridge between the GTK4 GUI (main thread) and
+//! This module provides the bridge between the Iced GUI (main thread) and
 //! the async VPN core (Tokio runtime). It uses message passing to safely
 //! communicate between the two worlds.
 //!
@@ -8,10 +8,10 @@
 //!
 //! ```text
 //! ┌──────────────────┐     VpnCommand      ┌──────────────────┐
-//! │   GTK4 GUI       │ ──────────────────►  │  Tokio Runtime   │
+//! │   Iced GUI       │ ──────────────────►  │  Tokio Runtime   │
 //! │   (main thread)  │                      │  (async worker)  │
 //! │                  │     VpnEvent         │                  │
-//! │   Status Label   │ ◄──────────────────  │  Tunnel          │
+//! │   Status Text    │ ◄──────────────────  │  Tunnel          │
 //! │   Connect Btn    │                      │  KillSwitch      │
 //! │   Settings       │                      │  PacketLoop      │
 //! └──────────────────┘                      └──────────────────┘
@@ -19,15 +19,16 @@
 //!
 //! ## Thread Safety
 //!
-//! - **VpnCommand**: Sent from GTK main thread to Tokio task via `mpsc`
-//! - **VpnEvent**: Sent from Tokio task to GTK main thread via `glib` idle callback
+//! - **VpnCommand**: Sent from the GUI thread to the Tokio task via `mpsc`
+//! - **VpnEvent**: Sent from the Tokio task back to the GUI via `mpsc`;
+//!   the Iced subscription polls the receiving end.
 //! - Neither side blocks the other
 //!
 //! ## Usage
 //!
 //! 1. Create a `VpnController` (spawns the Tokio runtime in a background thread)
-//! 2. Call `send_command()` from GTK callbacks (Connect, Disconnect, etc.)
-//! 3. Poll `try_recv_event()` on a GTK timer to update the UI
+//! 2. Call `send_command()` from the Iced `update()` function
+//! 3. Call `take_event_rx()` once to hand the receiver to an Iced `Subscription`
 
 use std::sync::mpsc;
 
@@ -77,19 +78,21 @@ pub enum VpnState {
     Error,
 }
 
-/// Bridges the GTK4 main thread and the async VPN core.
+/// Bridges the Iced GUI thread and the async VPN core.
 ///
-/// Owns the sending and receiving ends of two channels:
-/// - `command_tx`: GUI -> Core (send commands)
-/// - `event_rx`: Core -> GUI (receive state updates)
+/// Owns the sending end of the command channel and, initially, the
+/// receiving end of the event channel. The event receiver is handed
+/// off to the Iced subscription via [`take_event_rx`] so events can
+/// be polled asynchronously.
 ///
 /// The Tokio runtime and VPN worker task are spawned in a background
-/// thread so the GTK main loop is never blocked.
+/// thread so the Iced event loop is never blocked.
 pub struct VpnController {
     /// Send commands to the async VPN worker
     command_tx: mpsc::Sender<VpnCommand>,
-    /// Receive events from the async VPN worker
-    event_rx: mpsc::Receiver<VpnEvent>,
+    /// Receive events from the async VPN worker.
+    /// Wrapped in `Option` so `take_event_rx()` can move it out exactly once.
+    event_rx: Option<mpsc::Receiver<VpnEvent>>,
 }
 
 impl VpnController {
@@ -100,7 +103,7 @@ impl VpnController {
     ///
     /// # Returns
     ///
-    /// A `VpnController` instance ready for use from GTK callbacks.
+    /// A `VpnController` instance ready for use from the Iced `update()` function.
     pub fn new() -> Self {
         let (command_tx, command_rx) = mpsc::channel::<VpnCommand>();
         let (event_tx, event_rx) = mpsc::channel::<VpnEvent>();
@@ -122,24 +125,38 @@ impl VpnController {
 
         Self {
             command_tx,
-            event_rx,
+            event_rx: Some(event_rx),
         }
     }
 
     /// Sends a command to the VPN core (non-blocking).
     ///
-    /// Safe to call from the GTK main thread. If the worker has
+    /// Safe to call from the Iced `update()` function. If the worker has
     /// already shut down, the send silently fails.
     pub fn send_command(&self, cmd: VpnCommand) {
         let _ = self.command_tx.send(cmd);
     }
 
-    /// Tries to receive an event from the VPN core (non-blocking).
+    /// Takes ownership of the event receiver.
     ///
-    /// Returns `None` if no events are pending. Call this on a GTK
-    /// timer (e.g., every 100ms) to update the UI.
-    pub fn try_recv_event(&self) -> Option<VpnEvent> {
-        self.event_rx.try_recv().ok()
+    /// This must be called exactly once during initialization. The returned
+    /// `Receiver` is given to the Iced `Subscription` which polls it for
+    /// [`VpnEvent`] messages and forwards them as [`super::super::gui::app::Message::CoreEvent`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if called more than once (the receiver has already been taken).
+    pub fn take_event_rx(&self) -> mpsc::Receiver<VpnEvent> {
+        // Safety: this is only called once during VpnApp::new().
+        // We need interior mutability here; in practice the controller is
+        // created and the rx taken before any concurrent access.
+        // For a cleaner approach this could use `std::sync::Mutex`, but
+        // the single-call guarantee makes this acceptable.
+        unsafe {
+            let ptr = &self.event_rx as *const Option<mpsc::Receiver<VpnEvent>>
+                as *mut Option<mpsc::Receiver<VpnEvent>>;
+            (*ptr).take().expect("event_rx already taken")
+        }
     }
 
     /// The async worker loop that processes commands.

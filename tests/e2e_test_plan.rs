@@ -193,6 +193,10 @@ fn e2e_server_selection_from_config() {
 fn e2e_controller_connect_disconnect_flow() {
     let controller = VpnController::new();
 
+    // Take the event receiver -- in the Iced GUI this is handed to a
+    // Subscription; in tests we poll it directly with try_recv().
+    let event_rx = controller.take_event_rx();
+
     // Send connect command
     controller.send_command(VpnCommand::Connect {
         server_endpoint: "203.0.113.1:51820".to_string(),
@@ -204,7 +208,7 @@ fn e2e_controller_connect_disconnect_flow() {
 
     // Should receive Connecting state event
     let mut saw_connecting = false;
-    while let Some(event) = controller.try_recv_event() {
+    while let Ok(event) = event_rx.try_recv() {
         if let VpnEvent::StateChanged(VpnState::Connecting) = event {
             saw_connecting = true;
         }
@@ -216,7 +220,7 @@ fn e2e_controller_connect_disconnect_flow() {
     std::thread::sleep(Duration::from_millis(200));
 
     let mut saw_disconnected = false;
-    while let Some(event) = controller.try_recv_event() {
+    while let Ok(event) = event_rx.try_recv() {
         if let VpnEvent::StateChanged(VpnState::Disconnected) = event {
             saw_disconnected = true;
         }

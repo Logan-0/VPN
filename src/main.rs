@@ -1,7 +1,7 @@
 //! # RustVPN Main Entry Point
 //!
 //! This is the main entry point for the RustVPN application.
-//! It performs graceful startup checks and starts the GTK4 graphical user interface.
+//! It performs graceful startup checks and starts the Iced graphical user interface.
 //!
 //! ## Networking Concepts
 //!
@@ -19,7 +19,7 @@
 /// 3. Load configuration from disk
 /// 4. Validate configuration values
 /// 5. Spawn background thread for update check (non-blocking)
-/// 6. Create and run GTK4 application
+/// 6. Create and run Iced application (Elm architecture)
 /// 7. Build user interface
 /// 8. Wait for user interactions
 /// 9. Handle VPN connection requests from GUI
@@ -33,7 +33,7 @@ use anyhow::Result;
 /// Main entry point for the RustVPN application
 /// 
 /// Performs graceful startup with privilege checks, configuration loading,
-/// and validation before starting the GTK4 GUI application.
+/// and validation before starting the Iced GUI application.
 /// 
 /// ## Networking Context
 /// 
@@ -96,7 +96,7 @@ fn main() {
         }
     });
     
-    // Run the GTK4 GUI application
+    // Run the Iced GUI application (cross-platform, pure Rust, Elm architecture)
     // The GUI provides user control over VPN networking operations
     tracing::info!("Starting GUI application...");
     VpnApp::run();

@@ -9,7 +9,7 @@
 ///
 /// - **core**: Core VPN functionality (tunnel, kill switch, reconnect)
 /// - **dns**: DNS filtering and resolution
-/// - **gui**: GTK4 graphical user interface
+/// - **gui**: Iced graphical user interface (Elm architecture)
 /// - **platform**: Platform-specific networking operations
 /// - **config**: Configuration management
 /// - **server**: VPN server selection and management
@@ -61,8 +61,8 @@ pub mod dns;
 
 /// Graphical user interface module
 /// 
-/// Contains the GTK4-based GUI:
-/// - **app**: Main application window and controls
+/// Contains the Iced-based GUI (cross-platform, pure Rust):
+/// - **app**: Main application window and controls (Elm architecture)
 pub mod gui;
 
 /// Platform-specific networking module
