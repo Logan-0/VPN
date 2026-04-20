@@ -44,7 +44,8 @@
 
 use iced::widget::{button, checkbox, column, container, pick_list, text};
 use iced::{Element, Length, Subscription, Task, Theme};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::config::VpnConfig;
 use crate::core::controller::{VpnCommand, VpnController, VpnEvent, VpnState};
@@ -153,6 +154,8 @@ pub enum Message {
     DnsFilteringToggled(bool),
     /// An event arrived from the async VPN core worker.
     CoreEvent(VpnEvent),
+    /// 100 ms timer tick: drains the VPN core event channel and refreshes the uptime display.
+    Tick,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -185,9 +188,10 @@ pub struct VpnApp {
     selected_server: Option<ServerOption>,
     /// Bridge to the async VPN core (commands go out, events come in).
     controller: VpnController,
-    /// Receiving half of the event channel, wrapped in Option so the
-    /// subscription can take ownership of it exactly once.
-    event_rx: Option<mpsc::Receiver<VpnEvent>>,
+    /// Receiving half of the event channel, polled on every `Tick`.
+    event_rx: Arc<Mutex<mpsc::Receiver<VpnEvent>>>,
+    /// Wall-clock time the current VPN session was established, drives the uptime display.
+    connected_since: Option<Instant>,
 }
 
 impl VpnApp {
@@ -215,7 +219,7 @@ impl VpnApp {
             .or_else(|| servers.first().cloned());
 
         let controller = VpnController::new();
-        let event_rx = Some(controller.take_event_rx());
+        let event_rx = Arc::new(Mutex::new(controller.take_event_rx()));
 
         (
             Self {
@@ -225,6 +229,7 @@ impl VpnApp {
                 selected_server,
                 controller,
                 event_rx,
+                connected_since: None,
             },
             Task::none(),
         )
@@ -294,23 +299,36 @@ impl VpnApp {
             }
 
             // ── Events arriving from the async VPN core ─────────────────
-            Message::CoreEvent(event) => match event {
-                VpnEvent::StateChanged(state) => {
-                    self.connection_state = match state {
-                        VpnState::Disconnected => ConnectionState::Disconnected,
-                        VpnState::Connecting   => ConnectionState::Connecting,
-                        VpnState::Connected    => ConnectionState::Connected,
-                        VpnState::Reconnecting => ConnectionState::Reconnecting,
-                        VpnState::Error        => ConnectionState::Error,
-                    };
+            Message::CoreEvent(event) => self.apply_core_event(event),
+
+            // ── Timer tick: drain event channel, refresh uptime display ──
+            //
+            // Why collect into a Vec before processing?
+            // -----------------------------------------
+            // `event_rx.try_lock()` returns a MutexGuard that holds a shared
+            // borrow on `self.event_rx` (a field of `self`). Calling
+            // `self.apply_core_event()` inside that block would need `&mut self`,
+            // which conflicts with the existing shared borrow. Collecting all
+            // pending events into an owned Vec first lets the MutexGuard drop
+            // at the end of the inner block, freeing `self` for mutation.
+            // This "collect, drop guard, then process" pattern is the standard
+            // Rust solution for borrow-through-field conflicts.
+            Message::Tick => {
+                let events: Vec<VpnEvent> = self
+                    .event_rx
+                    .try_lock()
+                    .map(|rx| {
+                        let mut v = Vec::new();
+                        while let Ok(e) = rx.try_recv() {
+                            v.push(e);
+                        }
+                        v
+                    })
+                    .unwrap_or_default();
+                for evt in events {
+                    self.apply_core_event(evt);
                 }
-                VpnEvent::Error(msg) => {
-                    tracing::error!("VPN error: {}", msg);
-                }
-                VpnEvent::Info(msg) => {
-                    tracing::info!("VPN info: {}", msg);
-                }
-            },
+            }
         }
 
         Task::none()
@@ -394,7 +412,7 @@ impl VpnApp {
             status_text,
             text(server_display).size(16),
             text(ip_display).size(16),
-            text("Uptime: 00:00:00").size(16),
+            text(self.format_uptime()).size(16),
             connect_button,
             text("Select Server:").size(18),
             server_picker,
@@ -413,19 +431,106 @@ impl VpnApp {
             .into()
     }
 
-    /// Iced subscription that polls the VPN core event channel.
+    /// Drives the GUI's async update loop with a recurring 100 ms timer.
     ///
-    /// In the GTK4 version we used `glib::timeout_add_local` to poll events
-    /// every 100 ms. In Iced, a [`Subscription`] is the idiomatic replacement:
-    /// it runs as a long-lived async task managed by the runtime and emits
-    /// [`Message::CoreEvent`] whenever the VPN core sends something.
+    /// `iced::time::every` returns a `Subscription` that fires on a fixed
+    /// interval. Each tick emits `Message::Tick`, which causes `update()` to
+    /// drain any pending events from the VPN core channel and re-render the
+    /// uptime counter.
+    ///
+    /// ## Why polling instead of a push-based subscription?
+    ///
+    /// The VPN core uses a `std::sync::mpsc` channel, which is *synchronous*.
+    /// A push-based Iced subscription would need a blocking thread sitting on
+    /// `recv()` plus async bridging code. A 100 ms polling timer is simpler,
+    /// zero-overhead for a UI (state changes are rare), and avoids extra
+    /// threads entirely.
+    ///
+    /// ## Why `Arc<Mutex<Receiver>>` on `event_rx`?
+    ///
+    /// `subscription()` receives `&self` (immutable). We cannot move the
+    /// `Receiver` out of `self`. Wrapping it in `Arc<Mutex<...>>` lets
+    /// `update()` call `try_lock()` to borrow the receiver without violating
+    /// Rust's ownership rules. The `Mutex` is never actually contended --
+    /// only `update()` ever touches the receiver -- but the type system
+    /// requires it to prove the access is safe.
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
     }
 
     /// Application theme.
     fn theme(&self) -> Theme {
         Theme::Dark
+    }
+
+    /// Applies a single [`VpnEvent`] from the async worker to the GUI state.
+    ///
+    /// Called from two places:
+    /// - `Message::Tick` -- batch-drains the `mpsc` channel every 100 ms
+    /// - `Message::CoreEvent` -- available for a future push-based subscription
+    ///
+    /// ## Uptime tracking rules
+    ///
+    /// | New state     | `connected_since` action                          |
+    /// |---------------|---------------------------------------------------|
+    /// | `Connected`   | Set to `Instant::now()` (only if not already set) |
+    /// | `Connecting`  | Unchanged -- no timer while handshaking           |
+    /// | `Reconnecting`| Reset to `None` -- the previous session ended     |
+    /// | `Disconnected`| Reset to `None`                                   |
+    /// | `Error`       | Reset to `None`                                   |
+    ///
+    /// `Reconnecting` resets the timer because the old tunnel session is gone.
+    /// When `Connected` fires again, a fresh timer starts -- showing the
+    /// uptime of the *new* session rather than including the reconnect gap.
+    fn apply_core_event(&mut self, event: VpnEvent) {
+        match event {
+            VpnEvent::StateChanged(state) => {
+                self.connection_state = match state {
+                    VpnState::Disconnected => {
+                        self.connected_since = None;
+                        ConnectionState::Disconnected
+                    }
+                    VpnState::Connecting => ConnectionState::Connecting,
+                    VpnState::Connected => {
+                        if self.connected_since.is_none() {
+                            self.connected_since = Some(Instant::now());
+                        }
+                        ConnectionState::Connected
+                    }
+                    VpnState::Reconnecting => {
+                        self.connected_since = None;
+                        ConnectionState::Reconnecting
+                    }
+                    VpnState::Error => {
+                        self.connected_since = None;
+                        ConnectionState::Error
+                    }
+                };
+            }
+            VpnEvent::Error(msg) => tracing::error!("VPN error: {}", msg),
+            VpnEvent::Info(msg) => tracing::info!("VPN info: {}", msg),
+        }
+    }
+
+    /// Formats elapsed session time as `Uptime: HH:MM:SS`.
+    ///
+    /// Returns `Uptime: --:--:--` whenever `connected_since` is `None`
+    /// (i.e. not connected, connecting, reconnecting, or errored).
+    /// Called on every `view()` pass -- the 100 ms `Tick` subscription
+    /// triggers frequent repaints so the counter increments in real time.
+    fn format_uptime(&self) -> String {
+        match self.connected_since {
+            Some(t) => {
+                let secs = t.elapsed().as_secs();
+                format!(
+                    "Uptime: {:02}:{:02}:{:02}",
+                    secs / 3600,
+                    (secs % 3600) / 60,
+                    secs % 60
+                )
+            }
+            None => "Uptime: --:--:--".to_string(),
+        }
     }
 
     /// Runs the Iced application.

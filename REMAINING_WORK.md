@@ -1,420 +1,241 @@
-# RustVPN - Remaining Work
+# RustVPN — Remaining Work
 
-## Completed (5/5 Core Components)
+**Last Updated**: April 20, 2026
 
-### 1. Project Scaffolding 
-- Cargo workspace with all dependencies
-- Module structure (core, dns, gui, platform)
-- Cross-platform dependency configuration
-- Build profiles optimized for release
-
-### 2. WireGuard Tunnel Module
-- Complete encryption/decapsulation implementation using boringtun
-- X25519 key generation and management
-- Secure memory handling with Zeroizing
-- State management (Disconnected, Connecting, Connected, Reconnecting, Error)
-- Base64 key encoding/decoding utilities
-
-### 3. Kill Switch
-- **Linux**: iptables-based firewall rules with custom chain
-- **macOS**: pf (packet filter) configuration
-- **Windows**: netsh firewall rules
-- IPv6 leak prevention
-- Local network access preservation
-- Automatic cleanup on drop
-
-### 4. Auto-Reconnect Manager
-- Exponential backoff (1s → 2s → 4s → 8s → 16s → 30s max)
-- Health check loop (every 30 seconds)
-- Failure tracking and metrics
-- Reconnection reason tracking
-
-### 5. GTK4 GUI
-- Cross-platform interface (Linux/macOS/Windows)
-- Clean, minimal design with proper text rendering
-- Connection status display
-- Server selection dropdown
-- Settings checkboxes (Kill Switch, Auto-reconnect, DNS Filtering)
-- Uptime counter
-- Connect/Disconnect button with state management
+This document covers only work that is **not yet complete**. For the full list
+of what is already implemented, see `STATUS.md`.
 
 ---
 
-## High Priority Remaining Work
+## Priority 1 — Blocking for Real-World Use
 
-### 6. GUI-to-Core Integration
-**Status**: Not started  
-**Priority**: HIGH  
-**Complexity**: Medium
+### 1. Real Server List
 
-**What needs to be done**:
-- Wire up Connect button to actually call `tunnel.connect()`
-- Wire up Disconnect button to call `tunnel.disconnect()`
-- Update GUI status label based on tunnel state changes
-- Enable/disable kill switch from GUI checkbox
-- Handle server selection changes
-- Display real connection errors to user
-
-**Files to modify**:
-- `src/gui/app.rs` - Add tunnel instance and state management
-- Create bridge between GTK UI thread and async VPN core
-
-**Challenges**:
-- GTK runs on main thread, VPN core is async
-- Need message passing between GUI and core
-- State synchronization
-
----
-
-### 7. TUN Device Creation
-**Status**: Not started  
-**Priority**: HIGH  
-**Complexity**: High
-
-**What needs to be done**:
-- Create virtual network interface (TUN device)
-- Assign IP address to TUN device
-- Configure routing tables
-- Platform-specific implementations
-
-**Platform-specific details**:
-
-#### Linux
-```rust
-// Use tun crate
-let config = tun::Configuration::default()
-    .address((10, 8, 0, 2))
-    .netmask((255, 255, 255, 0))
-    .up();
-let dev = tun::create(&config)?;
-```
-- Device name: `tun0`, `tun1`, etc.
-- Requires root/CAP_NET_ADMIN
-- Use `ip route` to configure routing
-
-#### macOS
-```rust
-// Use utun devices
-let dev = tun::create_as_async(&config)?;
-```
-- Device name: `utun0`, `utun1`, etc.
-- Requires root privileges
-- Use `route add` for routing
-
-#### Windows
-```rust
-// Use WinTun driver
-// Requires WinTun.dll
-```
-- Requires Administrator privileges
-- Use `netsh interface ip` for configuration
-
-**Files to create/modify**:
-- `src/platform/linux.rs` - Linux TUN implementation
-- `src/platform/macos.rs` - macOS utun implementation
-- `src/platform/windows.rs` - Windows WinTun implementation
-
----
-
-### 8. Packet Processing Loop
-**Status**: Not started  
-**Priority**: HIGH  
-**Complexity**: High
-
-**What needs to be done**:
-- Read packets from TUN device
-- Encrypt packets using `tunnel.encapsulate()`
-- Send encrypted packets over UDP to VPN server
-- Receive encrypted packets from UDP socket
-- Decrypt packets using `tunnel.decapsulate()`
-- Write decrypted packets to TUN device
-- Handle keepalive messages
-
-**Pseudocode**:
-```rust
-async fn packet_loop(tunnel: Arc<Mutex<Tunnel>>, tun: TunDevice, udp: UdpSocket) {
-    loop {
-        tokio::select! {
-            // Outgoing: TUN → Encrypt → UDP
-            Ok(packet) = tun.read() => {
-                let mut encrypted = vec![0u8; packet.len() + 32];
-                let len = tunnel.lock().await.encapsulate(&packet, &mut encrypted)?;
-                udp.send_to(&encrypted[..len], server_addr).await?;
-            }
-            
-            // Incoming: UDP → Decrypt → TUN
-            Ok((encrypted, _)) = udp.recv_from() => {
-                let mut decrypted = vec![0u8; encrypted.len()];
-                let len = tunnel.lock().await.decapsulate(&encrypted, &mut decrypted)?;
-                tun.write(&decrypted[..len]).await?;
-            }
-            
-            // Keepalive timer
-            _ = keepalive_timer.tick() => {
-                // Send keepalive packet
-            }
-        }
-    }
-}
-```
-
-**Files to create**:
-- `src/core/packet_loop.rs` - Main packet processing logic
-
-**Challenges**:
-- High-performance async I/O
-- Error handling without crashing loop
-- Proper buffer management
-- MTU considerations
-
----
-
-## Medium Priority Remaining Work
-
-### 9. DNS Filtering
-**Status**: Stub implementation exists  
-**Priority**: MEDIUM  
-**Complexity**: Medium
-
-**What needs to be done**:
-- Implement DNS-over-HTTPS (DoH) client
-- Implement DNS-over-TLS (DoT) client
-- Load and parse blocklists (ads, malware, trackers)
-- Intercept DNS queries from TUN device
-- Filter queries against blocklist
-- Cache DNS responses
-- Forward allowed queries to DoH/DoT server
-
-**Blocklist sources**:
-- AdGuard DNS filter
-- Steven Black's hosts
-- EasyList
-- User-defined custom lists
-
-**Files to implement**:
-- `src/dns/filter.rs` - Blocklist management and filtering
-- `src/dns/resolver.rs` - DoH/DoT client implementation
-
----
-
-### 10. Server Configuration
-**Status**: Hardcoded example servers  
-**Priority**: MEDIUM  
+**File**: `src/server.rs`, `resources/servers.toml` (to create)  
 **Complexity**: Low
 
-**What needs to be done**:
-- Create server configuration file format (TOML/JSON)
-- Load servers from configuration file
-- Support for 50+ US state servers
-- Support for Sweden servers (Stockholm, Gothenburg, Malmö)
-- Server metadata (latency, load, location)
-- Server selection algorithm (best ping, least loaded)
+**Why this matters**: The current server list is hardcoded with placeholder IP
+addresses and dummy WireGuard public keys. Clicking Connect will reach
+`create_tun()` and the Noise handshake attempt, but the handshake will
+immediately fail because the keys are fake. Nothing in the core needs to change
+— you just need real endpoints.
 
-**Example config format**:
+**What WireGuard needs from a server**:
+- A UDP `host:port` endpoint reachable from the internet
+- The server's X25519 public key (32 bytes, base64-encoded)
+- The server must be configured to route the client's assigned TUN IP (`10.8.0.2`)
+
+**What to do**:
+1. Create `resources/servers.toml` using the format below
+2. Update `ServerManager::new()` in `src/server.rs` to load from that file with `include_str!()` or `fs::read_to_string()`
+
 ```toml
+# resources/servers.toml
+
 [[servers]]
-id = "us-ca-1"
-name = "US-California-1"
+id = "us-nyc-1"
+name = "US — New York"
 country = "US"
-state = "California"
-city = "Los Angeles"
+city = "New York"
 ip = "203.0.113.1"
 port = 51820
-public_key = "base64encodedkey=="
-load = 45  # percentage
+public_key = "REAL_BASE64_PUBLIC_KEY_HERE="
 
 [[servers]]
 id = "se-stockholm-1"
-name = "Sweden-Stockholm-1"
+name = "Sweden — Stockholm"
 country = "SE"
 city = "Stockholm"
 ip = "203.0.113.10"
 port = 51820
-public_key = "base64encodedkey=="
-load = 30
+public_key = "REAL_BASE64_PUBLIC_KEY_HERE="
 ```
 
-**Files to create**:
-- `resources/servers.toml` - Server list
-- Update `src/server.rs` - Load from file instead of hardcoded
+---
+
+## Priority 2 — Security Features
+
+### 2. DNS-over-HTTPS Wiring
+
+**Files**: `src/dns/filter.rs`, `src/dns/resolver.rs`, `src/core/controller.rs`  
+**Complexity**: Medium
+
+**Why this matters**: Without this, DNS queries bypass the VPN tunnel entirely.
+Your browser sends a DNS query to `8.8.8.8:53` over UDP — that packet exits
+through the TUN device and gets routed through the tunnel, but the *reply* comes
+back from Google's IP directly. More critically, many DNS queries are made
+before any packets flow through the tunnel, so your ISP can see every hostname
+you visit. DNS-over-HTTPS wraps DNS inside an encrypted HTTPS connection,
+preventing this.
+
+**What already exists**:
+- `DnsResolver` in `src/dns/resolver.rs` — fully implemented Cloudflare DoH
+  (`1.1.1.1/dns-query`) and Google DoH (`8.8.8.8/dns-query`) clients using
+  `hickory-resolver`
+- `DnsFilter` in `src/dns/filter.rs` — blocklist matching with `HashSet<String>`,
+  hosts-file parsing, `DnsFilterMode::ExternalDns` passthrough mode
+
+**What is missing — wiring the two together**:
+- The `run_packet_loop` currently forwards all UDP packets as-is. DNS queries
+  (destination port 53) need to be intercepted and passed through `DnsFilter`
+  before being resolved via `DnsResolver::resolve_doh()`
+- If the domain is blocked, return a synthetic `0.0.0.0` response to the TUN
+  device instead of forwarding the query
+- If allowed, forward through DoH and write the response back to TUN
+
+```text
+DNS packet from TUN (dst port 53)
+        │
+        ▼
+DnsFilter::should_block(hostname)?
+        │ Yes                │ No
+        ▼                    ▼
+Return 0.0.0.0          DnsResolver::resolve_doh(hostname)
+synthetic reply               │
+        │                    ▼
+        └──► Write DNS response to TUN device
+```
+
+**Suggested implementation location**: inside the outgoing arm of the
+`tokio::select!` in `run_packet_loop`, after reading a packet from the TUN fd,
+before calling `tunnel.encapsulate()`.
 
 ---
 
-### 11. Configuration Management
-**Status**: Basic structure exists  
-**Priority**: MEDIUM  
+### 3. Privilege Dropping
+
+**File**: `src/main.rs`  
 **Complexity**: Low
 
-**What needs to be done**:
-- Save user settings to disk
-- Load settings on startup
-- Store user preferences:
-  - Last selected server
-  - Kill switch enabled/disabled
-  - Auto-reconnect enabled/disabled
-  - DNS filtering enabled/disabled
-  - Auto-connect on startup
-- Secure storage of private key
-- Platform-specific config locations:
-  - Linux: `~/.config/rustvpn/config.toml`
-  - macOS: `~/Library/Application Support/RustVPN/config.toml`
-  - Windows: `%APPDATA%\RustVPN\config.toml`
+**Why this matters**: The process starts as root (or with `CAP_NET_ADMIN`) to
+create the TUN device and configure iptables. Once setup is done, there is no
+need for elevated privileges. Running as root for the lifetime of the process is
+a security risk — a bug in the HTTP client, the GUI, or the config parser could
+be exploited with full root access.
 
-**Files to implement**:
-- Update `src/config.rs` - Add load/save functionality
+**What to do**: After `VpnController::new()` returns (TUN and iptables are
+configured inside the background thread at connect time), the main thread can
+drop privileges. On Linux this looks like:
+
+```rust
+// After tunnel setup, drop to a non-root user
+unsafe {
+    // Replace 1000 with the actual UID of the invoking user
+    // (read from $SUDO_UID or $PKEXEC_UID at startup)
+    libc::setuid(1000);
+    libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+}
+```
+
+The tricky part is knowing *which* UID to drop to. The standard approach is to
+read `$SUDO_UID` from the environment before dropping privileges, so you return
+to the user who invoked `sudo`.
 
 ---
 
-### 12. Graceful Startup
-**Status**: Not implemented  
-**Priority**: MEDIUM  
+## Priority 3 — Platform Completeness
+
+### 4. macOS TUN Device
+
+**File**: `src/platform/macos.rs`  
+**Complexity**: Medium
+
+**Why this matters**: macOS does not have the Linux `tun` character device at
+`/dev/net/tun`. Instead it uses `utun` (user-space TUN) devices that are
+created through a `PF_SYSTEM` socket with `SYSPROTO_CONTROL`. The routing setup
+also differs: macOS uses `route add -net` instead of `ip route`.
+
+**What exists**: `macos.rs` is a stub that returns `Err("not implemented")` for
+`create_tun()`.
+
+**What to implement**:
+1. Open a `PF_SYSTEM` / `SYSPROTO_CONTROL` socket
+2. Connect with `utun` control name to get a `utunN` device
+3. Use `ioctl` to assign the IP address and bring the interface up
+4. Add routes with `route add` via `std::process::Command`
+5. Implement `cleanup()` to remove routes and close the socket
+
+The `tun` crate (already a dependency) supports macOS `utun` devices, so the
+implementation can closely mirror `linux.rs` — the main difference is the
+routing commands.
+
+---
+
+### 5. Windows TUN Device
+
+**File**: `src/platform/windows.rs`  
+**Complexity**: High
+
+**Why this matters**: Windows has no native TUN support in the kernel. WireGuard
+on Windows uses the **WinTun** driver, a kernel-mode driver that must be
+installed separately or bundled with the application. The driver exposes a
+Ring Buffer API to user space.
+
+**What exists**: `windows.rs` is a stub.
+
+**What to implement**:
+1. Bundle or download the WinTun DLL (`wintun.dll`)
+2. Call `WintunCreateAdapter()` to create a virtual adapter
+3. Open a session with `WintunStartSession()`
+4. Use `WintunAllocateSendPacket()` / `WintunSendPacket()` for outbound traffic
+5. Use `WintunReceivePacket()` for inbound traffic
+6. Configure IP address via Windows IP Helper API (`SetUnicastIpAddressEntry`)
+7. Add routes via `CreateIpForwardEntry2`
+
+The `wintun` crate (not currently a dependency) wraps the WinTun C API.
+
+---
+
+## Priority 4 — Polish
+
+### 6. Update Checker Notifications
+
+**File**: `src/update.rs`, `src/gui/app.rs`  
 **Complexity**: Low
 
-**What needs to be done**:
-- Wait for network interfaces to be available
-- Verify VPN server is reachable before connecting
-- Load configuration and validate
-- Initialize logging
-- Check for required privileges (root/admin)
-- Fallback server selection if primary is down
-- User-friendly error messages
+**What exists**: `UpdateChecker::check_for_updates()` is fully implemented —
+it hits the GitHub releases API, parses `tag_name`, and returns
+`Some(version_string)` if an update is available. The constant
+`GITHUB_RELEASES_API_URL` needs to be set to the real repository path.
 
-**Files to modify**:
-- `src/main.rs` - Add startup sequence
+**What is missing**:
+1. Replace the placeholder in `GITHUB_RELEASES_API_URL` with the actual repo path:
+   ```rust
+   // src/update.rs
+   const GITHUB_RELEASES_API_URL: &str =
+       "https://api.github.com/repos/YOUR_USER/YOUR_REPO/releases/latest";
+   ```
+2. Wire the result from `check_for_updates()` back to the GUI. The background
+   update check is already spawned in `main()`. Add a `VpnEvent::UpdateAvailable(String)`
+   variant and send it through the event channel when a new version is found.
+3. Display a dismissable banner in the Iced view when `app_state.pending_update`
+   is `Some(version)`.
 
 ---
 
-### 13. Update Checker
-**Status**: Stub exists  
-**Priority**: LOW  
+### 7. Configurable Client TUN IP
+
+**File**: `src/core/controller.rs`, `src/config.rs`  
 **Complexity**: Low
 
-**What needs to be done**:
-- Check GitHub releases for new version on startup
-- Background check every 24 hours during use
-- Show notification if update available
-- No forced updates
-- Silent if already up-to-date
+**What exists**: The client-side TUN IP is hardcoded to `10.8.0.2/24` in the
+`Connect` handler in `controller.rs`. This works when there is only one client
+and the server is configured for that subnet, but breaks when deploying multiple
+clients or using a server with a different address range.
 
-**Files to implement**:
-- Update `src/update.rs` - Add actual update checking logic
-
----
-
-## 🧪 Testing Requirements
-
-### 14. Unit Tests
-**Status**: Not started  
-**Priority**: MEDIUM
-
-**Tests needed**:
-- Tunnel encryption/decryption
-- Key generation and encoding
-- Kill switch rule creation/removal
-- Reconnect manager backoff logic
-- Configuration load/save
-- Server selection algorithm
-
-**Files to create**:
-- `tests/tunnel_tests.rs`
-- `tests/killswitch_tests.rs`
-- `tests/reconnect_tests.rs`
+**What to do**: Add `tun_ip: Option<String>` to `VpnConfig` and read it in
+the `Connect` handler, falling back to `"10.8.0.2"` if not set. Expose it as
+an optional field in the GUI settings or parse it from the server's provisioning
+response.
 
 ---
 
-### 15. Integration Tests
-**Status**: Not started  
-**Priority**: MEDIUM
+## Project Statistics
 
-**Tests needed**:
-- Full VPN connection flow
-- Packet routing through tunnel
-- Kill switch activation on disconnect
-- Auto-reconnect after failure
-- DNS filtering functionality
-- Multi-platform compatibility
-
-**Files to create**:
-- `tests/integration/vpn_flow.rs`
-- `tests/integration/killswitch.rs`
-
----
-
-### 16-17. Platform Testing
-**Status**: Only tested on Linux (Ubuntu)  
-**Priority**: LOW
-
-**Platforms to test**:
-- Linux (Ubuntu 24.04) - Working
-- macOS (10.15+) - Not tested
-- Windows (10/11) - Not tested
-
-**Platform-specific concerns**:
-
-#### macOS
-- GTK4 installation: `brew install gtk4`
-- TUN device: Uses `utun` devices
-- Kill switch: Uses `pf` (packet filter)
-- Requires admin privileges
-
-#### Windows
-- GTK4 installation: More complex, may need MSYS2
-- TUN device: Requires WinTun driver
-- Kill switch: Uses Windows Firewall API
-- Requires Administrator privileges
-
----
-
-## Current Project Statistics
-
-- **Total Lines of Code**: ~2,000
-- **Documentation**: 500+ lines
-- **Modules Implemented**: 8/12
-- **Platform Support**: Linux (tested), macOS (untested), Windows (untested)
-- **Completion**: ~40%
-
----
-
-## Recommended Implementation Order
-
-1. **TUN Device Creation** (Task #7) - Critical for any VPN functionality
-2. **Packet Processing Loop** (Task #8) - Core VPN operation
-3. **GUI Integration** (Task #6) - Make the UI functional
-4. **Server Configuration** (Task #10) - Load real servers
-5. **Configuration Management** (Task #12) - Save user settings
-6. **Graceful Startup** (Task #13) - Better user experience
-7. **DNS Filtering** (Task #9) - Additional security feature
-8. **Unit Tests** (Task #14) - Ensure reliability
-9. **Update Checker** (Task #11) - Nice to have
-10. **Platform Testing** (Tasks #16-17) - Verify cross-platform
-
----
-
-## Security Considerations
-
-### Already Implemented
-- Zero-logging architecture
-- Secure key storage with Zeroizing
-- Kill switch to prevent leaks
-- Modern cryptography (ChaCha20-Poly1305, X25519)
-
-### Still Needed
-- DNS leak prevention (part of DNS filtering)
-- IPv6 leak prevention (kill switch blocks IPv6)
-- WebRTC leak prevention (DNS filtering)
-- Privilege dropping after startup
-- Secure configuration file permissions
-
----
-
-## Notes
-
-- The VPN **core is complete and functional** - all cryptography and state management works
-- The **GUI is working** on Linux with GTK4
-- The main work remaining is **integration and platform-specific code**
-- Estimated time to MVP: **20-40 hours** of development
-- Estimated time to production-ready: **60-100 hours** including testing
-
----
-
-**Last Updated**: March 18, 2026
+| Item | Value |
+|---|---|
+| Total tests | 155 (0 failures) |
+| Core modules complete | 13 / 13 |
+| Platform layers complete | 1 / 3 (Linux only) |
+| Estimated time to first real connection | 1–2 h (item 1 only) |
+| Estimated time to production-ready | 20–40 h (all items) |

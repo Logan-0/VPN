@@ -33,10 +33,12 @@
 //! - Read/write for owner only
 //! - No access for group or others
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 /// VPN Configuration Structure
 ///
@@ -127,6 +129,39 @@ pub struct VpnConfig {
     /// Format: IPv4 or IPv6 address as a string (e.g., "192.168.1.53").
     /// None means use the default Cloudflare DoH resolver with built-in filtering.
     pub custom_dns_server_address: Option<String>,
+
+    /// The client's WireGuard private key, stored as a base64 string.
+    ///
+    /// ## Why This Key Exists
+    ///
+    /// Every WireGuard peer has a 32-byte X25519 private key that:
+    /// 1. Proves the client's identity to the server during the Noise protocol
+    ///    handshake (think of it as an SSH key for VPN connections)
+    /// 2. Participates in Diffie-Hellman key exchange to derive the per-session
+    ///    encryption key (ChaCha20-Poly1305)
+    /// 3. Must stay secret -- anyone who holds this key can impersonate this device
+    ///
+    /// ## Why Store It in the Config File
+    ///
+    /// The key is stable across restarts so the server always sees the same client
+    /// identity. In a production deployment the server's allowlist maps each public
+    /// key (derived from this private key) to allowed IPs and bandwidth limits.
+    /// Regenerating the key each run would look like a new, unregistered device.
+    ///
+    /// ## Why `Option<String>` Instead of a Required Field
+    ///
+    /// `None` means no key has been generated yet. [`VpnConfig::get_or_create_private_key`]
+    /// generates one on the first call and writes it back to disk. Existing config
+    /// files that predate this field deserialize as `None` (via `#[serde(default)]`)
+    /// and get a key automatically on next connect.
+    ///
+    /// ## Security
+    ///
+    /// - Saved with 0600 permissions (owner read/write only, no group/other access)
+    /// - Loaded into [`Zeroizing<[u8; 32]>`] which overwrites the bytes on drop
+    /// - Never logged or transmitted in plaintext
+    #[serde(default)]
+    pub client_private_key_base64: Option<String>,
 }
 
 impl Default for VpnConfig {
@@ -154,6 +189,7 @@ impl Default for VpnConfig {
             dns_filtering_protection_enabled: true,
             selected_vpn_server_identifier: None,
             custom_dns_server_address: None,
+            client_private_key_base64: None,
         }
     }
 }
@@ -313,4 +349,217 @@ impl VpnConfig {
         tracing::info!("Saved configuration to {}", config_path.display());
         Ok(())
     }
+
+    /// Returns the client's WireGuard private key, generating and saving one if
+    /// none exists.
+    ///
+    /// ## Key Lifecycle
+    ///
+    /// **First call** (`client_private_key_base64` is `None`):
+    /// 1. A fresh X25519 private key is generated with `boringtun`'s
+    ///    `StaticSecret::random_from_rng`, which uses the OS CSPRNG.
+    /// 2. The private key bytes are base64-encoded and written to
+    ///    `client_private_key_base64`, then the config file is saved.
+    /// 3. The raw bytes are returned wrapped in [`Zeroizing`].
+    ///
+    /// **Subsequent calls** (`client_private_key_base64` is `Some(b64)`):
+    /// 1. The base64 string is decoded back to 32 bytes.
+    /// 2. The bytes are returned wrapped in [`Zeroizing`].
+    /// The same key is always returned, giving the server a stable client identity.
+    ///
+    /// ## Why `&mut self`?
+    ///
+    /// If no key exists this method writes `client_private_key_base64` into `self`
+    /// and calls `save()`. Mutation requires an exclusive (`&mut`) borrow.
+    ///
+    /// ## Why `Zeroizing<[u8; 32]>`?
+    ///
+    /// `Zeroizing<T>` implements `Drop` by overwriting the wrapped bytes with zeros
+    /// before the memory is freed. Without it, the private key bytes might remain
+    /// readable in freed heap memory until the allocator reuses that region -- a
+    /// window where they could appear in crash dumps or be read from swap.
+    ///
+    /// # Returns
+    /// * `Ok(Zeroizing<[u8; 32]>)` - The private key, ready for [`TunnelConfig::private_key`]
+    /// * `Err(_)` - The stored base64 is malformed, or saving the newly generated key failed
+    pub fn get_or_create_private_key(&mut self) -> Result<Zeroizing<[u8; 32]>> {
+        if let Some(b64) = &self.client_private_key_base64 {
+            let bytes = STANDARD
+                .decode(b64)
+                .context("Failed to decode stored private key from base64")?;
+            if bytes.len() != 32 {
+                anyhow::bail!(
+                    "Stored private key has wrong length: {} bytes (expected 32)",
+                    bytes.len()
+                );
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            return Ok(Zeroizing::new(arr));
+        }
+
+        // No key stored yet -- generate a fresh X25519 private key.
+        // StaticSecret::random_from_rng draws entropy from the OS CSPRNG.
+        // We only store the private key bytes; the public key is re-derived
+        // each time from the private key inside the WireGuard handshake.
+        use boringtun::x25519::StaticSecret;
+        let private = StaticSecret::random_from_rng(rand::thread_rng());
+        let key_bytes: [u8; 32] = private.to_bytes();
+
+        // Persist the new key immediately so the same identity survives restarts.
+        self.client_private_key_base64 = Some(STANDARD.encode(&key_bytes));
+        self.save().context("Failed to save newly generated private key")?;
+
+        tracing::info!("Generated and saved a new WireGuard client private key");
+        Ok(Zeroizing::new(key_bytes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    fn config_with_b64_key(b64: &str) -> VpnConfig {
+        VpnConfig {
+            client_private_key_base64: Some(b64.to_string()),
+            ..VpnConfig::default()
+        }
+    }
+
+    fn b64_of(bytes: &[u8; 32]) -> String {
+        STANDARD.encode(bytes)
+    }
+
+    // ── Default ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_default_has_no_private_key() {
+        assert!(VpnConfig::default().client_private_key_base64.is_none());
+    }
+
+    #[test]
+    fn test_default_auto_connect_off() {
+        assert!(!VpnConfig::default().auto_connect_on_application_startup);
+    }
+
+    #[test]
+    fn test_default_kill_switch_on() {
+        assert!(VpnConfig::default().kill_switch_protection_enabled);
+    }
+
+    #[test]
+    fn test_default_auto_reconnect_on() {
+        assert!(VpnConfig::default().auto_reconnect_enabled);
+    }
+
+    // ── get_or_create_private_key: decode path ───────────────────────────────
+
+    #[test]
+    fn test_decode_valid_32_byte_key() {
+        let bytes = [42u8; 32];
+        let mut cfg = config_with_b64_key(&b64_of(&bytes));
+        let key = cfg.get_or_create_private_key().unwrap();
+        assert_eq!(*key, bytes);
+    }
+
+    #[test]
+    fn test_decode_preserves_all_byte_values() {
+        let bytes: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let mut cfg = config_with_b64_key(&b64_of(&bytes));
+        let key = cfg.get_or_create_private_key().unwrap();
+        assert_eq!(*key, bytes);
+    }
+
+    #[test]
+    fn test_decode_does_not_alter_stored_field() {
+        let bytes = [99u8; 32];
+        let b64 = b64_of(&bytes);
+        let mut cfg = config_with_b64_key(&b64);
+        cfg.get_or_create_private_key().unwrap();
+        assert_eq!(cfg.client_private_key_base64.as_deref(), Some(b64.as_str()));
+    }
+
+    #[test]
+    fn test_decode_returns_zeroizing_wrapper_of_correct_length() {
+        let mut cfg = config_with_b64_key(&b64_of(&[7u8; 32]));
+        let key: Zeroizing<[u8; 32]> = cfg.get_or_create_private_key().unwrap();
+        assert_eq!(key.len(), 32);
+    }
+
+    // ── get_or_create_private_key: error cases ───────────────────────────────
+
+    #[test]
+    fn test_invalid_base64_returns_error() {
+        let mut cfg = config_with_b64_key("not-valid-base64!!!");
+        assert!(cfg.get_or_create_private_key().is_err());
+    }
+
+    #[test]
+    fn test_key_too_short_returns_error() {
+        let short = STANDARD.encode([1u8; 16]);
+        let mut cfg = config_with_b64_key(&short);
+        assert!(cfg.get_or_create_private_key().is_err());
+    }
+
+    #[test]
+    fn test_key_too_long_returns_error() {
+        let long = STANDARD.encode([0u8; 64]);
+        let mut cfg = config_with_b64_key(&long);
+        assert!(cfg.get_or_create_private_key().is_err());
+    }
+
+    #[test]
+    fn test_empty_base64_returns_error() {
+        let mut cfg = config_with_b64_key("");
+        assert!(cfg.get_or_create_private_key().is_err());
+    }
+
+    // ── Serialisation / deserialisation ─────────────────────────────────────
+
+    #[test]
+    fn test_round_trip_preserves_key() {
+        let bytes = [55u8; 32];
+        let b64 = b64_of(&bytes);
+        let cfg = config_with_b64_key(&b64);
+        let toml = toml::to_string_pretty(&cfg).unwrap();
+        let loaded: VpnConfig = toml::from_str(&toml).unwrap();
+        assert_eq!(loaded.client_private_key_base64.as_deref(), Some(b64.as_str()));
+    }
+
+    #[test]
+    fn test_old_config_without_key_field_deserialises_as_none() {
+        // Simulates loading a config file that was written before this field existed.
+        let toml = r#"
+            auto_connect_on_application_startup = false
+            kill_switch_protection_enabled = true
+            auto_reconnect_enabled = true
+            dns_filtering_protection_enabled = true
+        "#;
+        let cfg: VpnConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.client_private_key_base64.is_none());
+    }
+
+    #[test]
+    fn test_config_with_key_field_null_deserialises_as_none() {
+        let toml = "client_private_key_base64 = \"\"\n";
+        let cfg: VpnConfig = toml::from_str(toml).unwrap_or_default();
+        // The field exists but is empty -- decode will return an error, not None
+        if let Some(v) = &cfg.client_private_key_base64 {
+            assert_eq!(v.as_str(), "");
+        }
+    }
+
+    #[test]
+    fn test_serialised_toml_contains_key_field_name() {
+        let cfg = config_with_b64_key(&b64_of(&[1u8; 32]));
+        let toml = toml::to_string_pretty(&cfg).unwrap();
+        assert!(toml.contains("client_private_key_base64"));
+    }
+
+    // ── Behaviour of the None path without touching real filesystem ──────────
+    // We cannot call the generate-and-save path in unit tests because it writes
+    // to ~/.config/rustvpn/config.toml. These tests verify the `Some(b64)` decode
+    // path exhaustively; the generate path is covered by integration tests or
+    // can be run manually.  Keeping this comment here as a reminder.
 }

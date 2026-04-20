@@ -35,6 +35,36 @@
 use anyhow::Result;
 use serde::Deserialize;
 
+/// GitHub Releases API endpoint queried for update checks.
+///
+/// ## Format
+///
+/// `https://api.github.com/repos/<owner>/<repo>/releases/latest`
+///
+/// Replace `owner/repo` with the actual GitHub user and repository name
+/// before the first public release. For example, if the project lives at
+/// `https://github.com/acme/rustvpn`, set this to:
+/// `"https://api.github.com/repos/acme/rustvpn/releases/latest"`
+///
+/// ## What the API Returns
+///
+/// A single JSON object describing the newest non-pre-release:
+/// ```json
+/// { "tag_name": "v0.2.0", "name": "RustVPN 0.2.0", "html_url": "..." }
+/// ```
+/// `check_for_updates` strips the leading `v` from `tag_name` and then
+/// compares the result against [`CARGO_PKG_VERSION`] using semver ordering.
+///
+/// ## Why a Constant?
+///
+/// A named constant is easier to locate with a project-wide search than a
+/// URL buried in implementation code, and makes it obvious this value must
+/// be changed before publishing.
+///
+/// TODO: replace `owner/repo` with the real repository path before release.
+const GITHUB_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/owner/repo/releases/latest";
+
 /// GitHub API response for latest release
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -144,9 +174,7 @@ impl UpdateChecker {
     /// * `Ok(None)` - No update available
     /// * `Err(_)` - Network error or API failure
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
-        // GitHub API endpoint for latest release
-        // Note: Replace 'owner/repo' with actual repository
-        let api_url = "https://api.github.com/repos/owner/repo/releases/latest";
+        let api_url = GITHUB_RELEASES_API_URL;
         
         // Make HTTP GET request
         let client = reqwest::Client::new();
@@ -200,5 +228,117 @@ impl UpdateChecker {
         
         // If all compared components are equal, the longer version is newer
         parts_b.len() > parts_a.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── UpdateChecker construction ───────────────────────────────────────────
+
+    #[test]
+    fn test_new_stores_version() {
+        let checker = UpdateChecker::new("1.2.3".to_string());
+        assert_eq!(checker.current_version(), "1.2.3");
+    }
+
+    #[test]
+    fn test_current_version_returns_exact_string() {
+        let checker = UpdateChecker::new("0.0.1-alpha".to_string());
+        assert_eq!(checker.current_version(), "0.0.1-alpha");
+    }
+
+    // ── is_newer_version: same version ──────────────────────────────────────
+
+    #[test]
+    fn test_same_version_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn test_same_major_minor_patch_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("1.2.3", "1.2.3"));
+    }
+
+    #[test]
+    fn test_zero_version_same_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("0.0.0", "0.0.0"));
+    }
+
+    // ── is_newer_version: newer by one component ─────────────────────────────
+
+    #[test]
+    fn test_newer_patch_is_newer() {
+        assert!(UpdateChecker::is_newer_version("0.1.0", "0.1.1"));
+    }
+
+    #[test]
+    fn test_newer_minor_is_newer() {
+        assert!(UpdateChecker::is_newer_version("0.1.0", "0.2.0"));
+    }
+
+    #[test]
+    fn test_newer_major_is_newer() {
+        assert!(UpdateChecker::is_newer_version("0.9.9", "1.0.0"));
+    }
+
+    #[test]
+    fn test_minor_bump_with_zero_patch_is_newer() {
+        assert!(UpdateChecker::is_newer_version("1.0.0", "1.1.0"));
+    }
+
+    // ── is_newer_version: older versions ────────────────────────────────────
+
+    #[test]
+    fn test_older_minor_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("0.2.0", "0.1.0"));
+    }
+
+    #[test]
+    fn test_older_patch_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("0.1.5", "0.1.3"));
+    }
+
+    #[test]
+    fn test_older_major_is_not_newer() {
+        assert!(!UpdateChecker::is_newer_version("2.0.0", "1.9.9"));
+    }
+
+    // ── is_newer_version: edge cases ────────────────────────────────────────
+
+    #[test]
+    fn test_longer_version_is_newer_when_prefix_equal() {
+        // "1.0.0" vs "1.0.0.1" -- extra component means newer
+        assert!(UpdateChecker::is_newer_version("1.0.0", "1.0.0.1"));
+    }
+
+    #[test]
+    fn test_shorter_version_is_not_newer_when_prefix_equal() {
+        assert!(!UpdateChecker::is_newer_version("1.0.0.1", "1.0.0"));
+    }
+
+    #[test]
+    fn test_large_version_numbers() {
+        assert!(UpdateChecker::is_newer_version("99.0.0", "100.0.0"));
+        assert!(!UpdateChecker::is_newer_version("100.0.0", "99.0.0"));
+    }
+
+    #[test]
+    fn test_version_with_leading_zeros_parsed_numerically() {
+        // "1.09.0" -> [1, 9, 0]; "1.010.0" -> [1, 10, 0]; 10 > 9
+        assert!(UpdateChecker::is_newer_version("1.09.0", "1.010.0"));
+    }
+
+    // ── GITHUB_RELEASES_API_URL constant ────────────────────────────────────
+
+    #[test]
+    fn test_api_url_contains_api_github() {
+        assert!(GITHUB_RELEASES_API_URL.contains("api.github.com"));
+    }
+
+    #[test]
+    fn test_api_url_contains_releases_latest() {
+        assert!(GITHUB_RELEASES_API_URL.contains("releases/latest"));
     }
 }

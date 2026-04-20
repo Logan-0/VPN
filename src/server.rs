@@ -62,7 +62,7 @@ struct ServerConfig {
 /// - `server_state_name`: State/region for more precise location
 /// - `server_endpoint_address`: IP:port where WireGuard UDP traffic is sent
 /// - `server_public_key_base64`: X25519 public key for cryptographic authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Server {
     /// Unique identifier for this server
     /// 

@@ -61,7 +61,7 @@
 //! ```
 //!
 //! ### macOS (pf - Packet Filter)
-//! ```
+//! ```text
 //! # Block all traffic except VPN
 //! block drop all
 //! pass on utun0
