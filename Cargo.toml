@@ -60,6 +60,10 @@ windows = { version = "0.58", features = [
     "Win32_Networking_WinSock",
     "Win32_System_Threading",
 ] }
+# WinTun: a Layer-3 TUN driver for Windows. The crate dynamically loads
+# wintun.dll at runtime; the DLL must be bundled alongside the binary or
+# present on PATH. See https://www.wintun.net/ for the official driver.
+wintun = "0.5"
 
 [dev-dependencies]
 # Testing

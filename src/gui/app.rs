@@ -42,7 +42,7 @@
 //! every change. The server list comes from [`ServerManager`] /
 //! `resources/servers.toml`.
 
-use iced::widget::{button, checkbox, column, container, pick_list, text};
+use iced::widget::{button, checkbox, column, container, pick_list, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -50,6 +50,7 @@ use std::time::{Duration, Instant};
 use crate::config::VpnConfig;
 use crate::core::controller::{VpnCommand, VpnController, VpnEvent, VpnState};
 use crate::server::{Server, ServerManager};
+use crate::update::UpdateChecker;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Connection State
@@ -156,6 +157,8 @@ pub enum Message {
     CoreEvent(VpnEvent),
     /// 100 ms timer tick: drains the VPN core event channel and refreshes the uptime display.
     Tick,
+    /// The user dismissed the "update available" banner.
+    DismissUpdateBanner,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -192,6 +195,9 @@ pub struct VpnApp {
     event_rx: Arc<Mutex<mpsc::Receiver<VpnEvent>>>,
     /// Wall-clock time the current VPN session was established, drives the uptime display.
     connected_since: Option<Instant>,
+    /// Latest version string reported by the background update checker, or
+    /// `None` if no update is available or the user dismissed the banner.
+    pending_update: Option<String>,
 }
 
 impl VpnApp {
@@ -221,6 +227,36 @@ impl VpnApp {
         let controller = VpnController::new();
         let event_rx = Arc::new(Mutex::new(controller.take_event_rx()));
 
+        // Spawn the background update check. We do it here (rather than in
+        // `main`) because we need a handle to the controller's event channel
+        // so the result can render as a dismissable banner. The check runs
+        // on its own short-lived Tokio runtime and fires exactly one
+        // `VpnEvent::UpdateAvailable` if a newer release is found.
+        let update_event_tx = controller.external_event_sender();
+        std::thread::Builder::new()
+            .name("update-check".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        tracing::warn!("Failed to start update check runtime: {}", e);
+                        return;
+                    }
+                };
+                rt.block_on(async move {
+                    let checker = UpdateChecker::new(env!("CARGO_PKG_VERSION").to_string());
+                    match checker.check_for_updates().await {
+                        Ok(Some(version)) => {
+                            tracing::info!("Update available: {}", version);
+                            let _ = update_event_tx.send(VpnEvent::UpdateAvailable(version));
+                        }
+                        Ok(None) => tracing::debug!("No updates available"),
+                        Err(e) => tracing::warn!("Update check failed: {}", e),
+                    }
+                });
+            })
+            .expect("Failed to spawn update-check thread");
+
         (
             Self {
                 connection_state: ConnectionState::Disconnected,
@@ -230,6 +266,7 @@ impl VpnApp {
                 controller,
                 event_rx,
                 connected_since: None,
+                pending_update: None,
             },
             Task::none(),
         )
@@ -329,6 +366,11 @@ impl VpnApp {
                     self.apply_core_event(evt);
                 }
             }
+
+            // ── User dismissed the update banner ────────────────────────
+            Message::DismissUpdateBanner => {
+                self.pending_update = None;
+            }
         }
 
         Task::none()
@@ -407,23 +449,52 @@ impl VpnApp {
         .on_toggle(Message::DnsFilteringToggled);
 
         // ── Assemble layout ─────────────────────────────────────────────
-        let content = column![
-            text("RustVPN").size(32),
-            status_text,
-            text(server_display).size(16),
-            text(ip_display).size(16),
-            text(self.format_uptime()).size(16),
-            connect_button,
-            text("Select Server:").size(18),
-            server_picker,
-            text("Settings:").size(18),
-            kill_switch_cb,
-            auto_reconnect_cb,
-            dns_filtering_cb,
-        ]
-        .spacing(14)
-        .padding(30)
-        .width(Length::Fill);
+        //
+        // The update banner is only included when `pending_update` is `Some`.
+        // We build a `Vec<Element>` so the banner can be conditionally
+        // pushed into the layout without the macro-based `column![]` having
+        // to special-case its presence at compile time.
+        let mut items: Vec<Element<Message>> = Vec::new();
+
+        if let Some(version) = self.pending_update.as_ref() {
+            // A simple two-row banner: message + dismiss button. Iced's
+            // theming will already give it some visual separation; we keep
+            // the markup minimal so the styling stays in the theme.
+            let banner = container(
+                row![
+                    text(format!(
+                        "Update available: v{} -- download from GitHub releases",
+                        version
+                    ))
+                    .size(14)
+                    .width(Length::Fill),
+                    button(text("Dismiss").size(14))
+                        .on_press(Message::DismissUpdateBanner),
+                ]
+                .spacing(10)
+                .padding(8),
+            )
+            .width(Length::Fill);
+            items.push(banner.into());
+        }
+
+        items.push(text("RustVPN").size(32).into());
+        items.push(status_text.into());
+        items.push(text(server_display).size(16).into());
+        items.push(text(ip_display).size(16).into());
+        items.push(text(self.format_uptime()).size(16).into());
+        items.push(connect_button.into());
+        items.push(text("Select Server:").size(18).into());
+        items.push(server_picker.into());
+        items.push(text("Settings:").size(18).into());
+        items.push(kill_switch_cb.into());
+        items.push(auto_reconnect_cb.into());
+        items.push(dns_filtering_cb.into());
+
+        let content = column(items)
+            .spacing(14)
+            .padding(30)
+            .width(Length::Fill);
 
         container(content)
             .width(Length::Fill)
@@ -509,6 +580,10 @@ impl VpnApp {
             }
             VpnEvent::Error(msg) => tracing::error!("VPN error: {}", msg),
             VpnEvent::Info(msg) => tracing::info!("VPN info: {}", msg),
+            VpnEvent::UpdateAvailable(version) => {
+                tracing::info!("Update banner shown: v{}", version);
+                self.pending_update = Some(version);
+            }
         }
     }
 

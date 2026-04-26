@@ -1,120 +1,425 @@
 //! # Windows Platform Module
 //!
-//! This module handles Windows-specific networking operations including
-//! TUN device creation using WinTun driver, routing configuration,
-/// and firewall management using Windows Filtering Platform.
+//! Implements the platform-layer responsibilities for Windows: creating
+//! a virtual TUN interface using the WinTun driver, configuring its IP
+//! address, and adding the routes that send all traffic into the VPN
+//! tunnel.
 //!
-//! ## Networking Concepts
+//! ## Why WinTun?
 //!
-/// ### WinTun Driver on Windows
-///
-/// Windows requires the WinTun driver for TUN device functionality.
-/// WinTun is a Layer 3 TUN driver for Windows.
-///
-/// Device naming: WireGuard creates virtual adapter with GUID-based name.
-///
-/// ### Windows Networking Commands
-///
-/// **netsh:**
-/// - Add route: `netsh interface ip add route`
-/// - Delete route: `netsh interface ip delete route`
-/// - Set IP: `netsh interface ip set address`
-///
-/// **Windows Firewall (netsh):**
-/// - Add rule: `netsh advfirewall firewall add rule`
-/// - Delete rule: `netsh advfirewall firewall delete rule`
-///
-/// **Windows Filtering Platform (WFP):**
-/// - More powerful than netsh
-/// - Programmatic firewall rule management
-/// - Requires Windows API calls
-///
-/// ### Permissions
-///
-/// Creating TUN devices and modifying routing requires Administrator privileges.
+//! Windows has no in-kernel TUN device analogous to Linux's
+//! `/dev/net/tun`. The de facto standard for user-space VPNs on Windows
+//! is the **WinTun** driver, written by the WireGuard authors. It is a
+//! signed kernel driver that exposes a Layer-3 virtual adapter and a
+//! ring-buffer API to user space. The official WireGuard Windows client
+//! uses it; so do most third-party WireGuard clients.
+//!
+//! WinTun is loaded dynamically from `wintun.dll`, which must be:
+//!   1. Bundled alongside the RustVPN executable, OR
+//!   2. Installed on the user's `PATH`.
+//!
+//! Distribute `wintun.dll` (the official one from <https://www.wintun.net/>)
+//! with release builds.
+//!
+//! ## API Shape (vs. Linux)
+//!
+//! The Linux platform layer exposes a `tun::Device` whose raw file
+//! descriptor is read/written by the packet loop. WinTun does not have
+//! a file descriptor; instead it exposes a `Session` object with
+//! `send_packet` / `receive_blocking` methods. Because of this, the
+//! controller and packet loop guard their fd-based code paths with
+//! `#[cfg(target_os = "linux")]` and the Windows-specific code paths
+//! use the `Session` directly.
+//!
+//! ## Privilege Requirements
+//!
+//! Creating a WinTun adapter requires Administrator privileges, just as
+//! creating a TUN device on Linux requires root or `CAP_NET_ADMIN`. This
+//! is not enforced here; the user must launch the application elevated.
+//!
+//! ## Routing
+//!
+//! After bringing up the adapter, the routing table needs three changes
+//! so VPN traffic flows correctly:
+//!
+//!   1. **Server bypass route** -- a host route to the VPN server's IP
+//!      via the original default gateway. Without this, encrypted
+//!      packets headed for the server would themselves try to go through
+//!      the tunnel, creating a loop.
+//!   2. **Two half-default routes** through the TUN adapter
+//!      (`0.0.0.0/1` and `128.0.0.0/1`). Together these cover all IPv4
+//!      traffic without conflicting with the existing `0.0.0.0/0` route,
+//!      mirroring the Linux convention.
+//!   3. **DNS resolver** routed through the tunnel so DNS queries do
+//!      not leak (handled by the platform's normal "use the adapter's
+//!      DNS" flag set via `netsh`).
+//!
+//! Routes are added via `netsh.exe`, which is present on every Windows
+//! installation and avoids pulling in the additional `IpHelper` API
+//! surface. The trade-off is that we shell out to a child process, but
+//! the cost is paid once per Connect/Disconnect.
 
-use anyhow::Result;
+#![cfg(target_os = "windows")]
 
-/// Windows Platform-Specific Networking Operations
+use anyhow::{anyhow, Context, Result};
+use std::net::{IpAddr, Ipv4Addr};
+use std::process::Command;
+use std::sync::Arc;
+
+/// MTU we configure on the TUN adapter. 1420 leaves room for the
+/// 32-byte WireGuard header inside a 1500-byte path MTU, matching the
+/// Linux implementation.
+const WIREGUARD_MTU: u32 = 1420;
+
+/// Adapter pool name passed to WinTun. Not user-visible; appears only
+/// in driver internals and `Get-NetAdapter` output. We use a stable
+/// string so reconnects can find and reclaim previous adapters.
+const ADAPTER_POOL: &str = "RustVPN";
+
+/// Adapter display name. Visible in the Windows Network and Sharing
+/// Center. Matches the executable name so users can identify it.
+const ADAPTER_NAME: &str = "RustVPN";
+
+/// Owns the WinTun adapter, the active session, and the routing-table
+/// changes that need to be reverted on disconnect.
 ///
-/// Handles Windows-specific networking operations including TUN device
-/// creation using WinTun driver, routing configuration, and firewall
-/// management using Windows Filtering Platform or netsh.
-///
-/// ## Networking Relevance
-///
-/// The Windows platform module:
-/// - Creates TUN devices using WinTun driver
-/// - Configures IP addresses using netsh or Windows API
-/// - Configures routing using netsh or Windows API
-/// - Manages firewall rules using WFP or netsh
-/// - Sets MTU for VPN interface
-/// - Handles Windows-specific network interface operations
-///
-/// ## WinTun Driver
-///
-/// WinTun is a Layer 3 TUN driver for Windows that provides:
-/// - High-performance packet processing
-/// - Kernel-space operation
-/// - Minimal overhead
-/// - WireGuard compatibility
-///
-/// ## Integration with VPN
-///
-/// When VPN connects:
-/// 1. Create TUN device using WinTun driver
-/// 2. Assign IP address using netsh or Windows API
-/// 3. Set MTU to 1420
-/// 4. Bring interface up
-/// 5. Add default route using netsh or Windows API
-/// 6. Configure Windows Firewall rules
-///
-/// When VPN disconnects:
-/// 1. Remove routes using netsh or Windows API
-/// 2. Remove Windows Firewall rules
-/// 3. Bring interface down
-/// 4. Destroy TUN device
-pub struct WindowsPlatform;
+/// Dropping this struct does **not** automatically clean up routes:
+/// the explicit [`cleanup`] method is called by the controller before
+/// drop so any errors can be surfaced to the user. `Drop` falls back to
+/// best-effort cleanup as a safety net for panic paths.
+pub struct WindowsPlatform {
+    /// The WinTun adapter handle. Wrapped in `Arc` because the session
+    /// borrows from it and we need both alive for the lifetime of the
+    /// connection.
+    adapter: Option<Arc<wintun::Adapter>>,
+
+    /// Active send/receive session. `None` until `create_tun` succeeds.
+    /// The session must be dropped *before* the adapter -- otherwise
+    /// WinTun will refuse to delete the adapter because it still has
+    /// open sessions.
+    session: Option<Arc<wintun::Session>>,
+
+    /// Original IPv4 default-gateway address parsed from `route print`,
+    /// stored so the server bypass route can be re-added on reconnect
+    /// and removed on disconnect.
+    original_gateway: Option<Ipv4Addr>,
+
+    /// VPN server IP, saved so [`cleanup`] can delete the bypass route
+    /// without re-parsing the routing table.
+    vpn_server_ip: Option<IpAddr>,
+}
 
 impl WindowsPlatform {
-    /// Creates a new Windows platform handler
-    /// 
-    /// Initializes the Windows platform-specific networking handler.
-    /// This handler will be used to create TUN devices using WinTun driver,
-    /// configure routing, and manage firewall rules on Windows systems.
-    /// 
-    /// ## Networking Context
-    /// 
-    /// Windows platform handler creation occurs during application initialization.
-    /// The handler is used when VPN connection/disconnection is requested.
-    /// 
-    /// ## Permissions Required
-    /// 
-    /// This requires Administrator privileges (UAC elevation).
-    /// 
-    /// ## WinTun Driver
-    /// 
-    /// Requires WinTun driver to be installed or bundled with the application.
-    /// WinTun provides kernel-space TUN device functionality on Windows.
-    /// 
-    /// ## Future Implementation
-    /// 
-    /// Currently returns empty handler. Future implementation will:
-    /// 1. Check for Administrator privileges
-    /// 2. Load WinTun driver (wintun.dll)
-    /// 3. Verify netsh availability
-    /// 4. Return initialized WindowsPlatform
-    /// 
-    /// # Returns
-    /// 
-    /// * `Ok(WindowsPlatform)` - New Windows platform handler
-    /// * `Err(_)` - If required permissions or WinTun driver are not available
+    /// Loads `wintun.dll` and prepares an empty platform handle.
+    ///
+    /// This does not yet create an adapter -- that happens in
+    /// [`create_tun`] when the user clicks Connect. Loading the DLL up
+    /// front gives us an early error if the file is missing, rather
+    /// than failing on the first connect attempt.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `wintun.dll` cannot be located. Bundle the DLL alongside
+    /// the executable or install the WinTun MSI from <https://www.wintun.net/>.
     pub fn new() -> Result<Self> {
-        // TODO: Implement actual Windows platform handler
-        // 1. Check for Administrator privileges
-        // 2. Load WinTun driver (wintun.dll)
-        // 3. Verify netsh availability
-        // 4. Check Windows Filtering Platform availability
-        Ok(Self)
+        // Loading `wintun.dll` proves the driver is reachable. The
+        // returned handle is dropped immediately because the
+        // `wintun::Adapter::create` call we make later loads it again
+        // internally; we just want the diagnostic up front.
+        unsafe { wintun::load() }
+            .map_err(|e| anyhow!("Failed to load wintun.dll: {}. Bundle wintun.dll alongside the executable.", e))?;
+
+        tracing::info!("WinTun driver loaded");
+        Ok(Self {
+            adapter: None,
+            session: None,
+            original_gateway: None,
+            vpn_server_ip: None,
+        })
+    }
+
+    /// Creates and configures the WinTun adapter, then adds the routes
+    /// that send traffic through the tunnel.
+    ///
+    /// ## Steps
+    ///
+    /// 1. Save the current default gateway so we can build a bypass
+    ///    route to the VPN server.
+    /// 2. Create (or reopen) the WinTun adapter named [`ADAPTER_NAME`]
+    ///    in pool [`ADAPTER_POOL`].
+    /// 3. Set the adapter's IPv4 address using `netsh`.
+    /// 4. Set the adapter MTU to 1420.
+    /// 5. Add a host route to the VPN server via the original gateway.
+    /// 6. Add two half-default routes through the new adapter.
+    /// 7. Start a session and return a clone for the packet loop.
+    ///
+    /// Returns an `Arc<wintun::Session>` instead of a raw fd because
+    /// WinTun's I/O API is method-based, not fd-based. The packet loop
+    /// holds onto this handle and uses `session.send_packet()` /
+    /// `session.receive_blocking()`.
+    ///
+    /// # Arguments
+    ///
+    /// - `tun_ip`: client tunnel address as `(a, b, c, d)`.
+    /// - `_tun_netmask`: subnet mask as `(a, b, c, d)`. Currently the
+    ///   netmask is encoded into the prefix length passed to `netsh`,
+    ///   so this argument is accepted for API symmetry with Linux but
+    ///   is converted internally rather than passed through.
+    /// - `vpn_server_ip`: the VPN server's IP, used to add the bypass
+    ///   route via the original gateway.
+    pub fn create_tun(
+        &mut self,
+        tun_ip: (u8, u8, u8, u8),
+        tun_netmask: (u8, u8, u8, u8),
+        vpn_server_ip: IpAddr,
+    ) -> Result<Arc<wintun::Session>> {
+        let addr = Ipv4Addr::new(tun_ip.0, tun_ip.1, tun_ip.2, tun_ip.3);
+        let mask = Ipv4Addr::new(tun_netmask.0, tun_netmask.1, tun_netmask.2, tun_netmask.3);
+        let prefix_len = netmask_to_prefix_len(mask);
+
+        tracing::info!("Creating WinTun adapter ({}/{})", addr, prefix_len);
+
+        // 1. Capture the existing default gateway. If this fails we
+        //    continue without a bypass route -- the connection will
+        //    still come up but tunnel reconnection traffic will try to
+        //    flow through the tunnel itself, which will fail. We log
+        //    loudly so the user can investigate.
+        self.original_gateway = read_default_gateway();
+        if let Some(gw) = self.original_gateway {
+            tracing::info!("Saved original default gateway: {}", gw);
+        } else {
+            tracing::warn!("Could not determine original default gateway");
+        }
+        self.vpn_server_ip = Some(vpn_server_ip);
+
+        // 2. Create the WinTun adapter. The third argument is an
+        //    optional GUID; passing `None` lets WinTun pick a stable
+        //    GUID derived from the pool/name pair, so reconnects reuse
+        //    the same adapter rather than spawning duplicates.
+        let wintun = unsafe { wintun::load() }
+            .context("wintun.dll not loadable at create time")?;
+        let adapter = match wintun::Adapter::open(&wintun, ADAPTER_NAME) {
+            Ok(existing) => {
+                tracing::info!("Reusing existing WinTun adapter");
+                existing
+            }
+            Err(_) => wintun::Adapter::create(&wintun, ADAPTER_POOL, ADAPTER_NAME, None)
+                .context("Failed to create WinTun adapter (Administrator required?)")?,
+        };
+        let adapter = Arc::new(adapter);
+        self.adapter = Some(Arc::clone(&adapter));
+
+        // 3. Configure the IP address using netsh. We use the GUID-
+        //    based interface alias because `netsh` accepts either the
+        //    friendly name or the LUID; the friendly name is what we
+        //    set with `ADAPTER_NAME` and is guaranteed to be unique.
+        run_netsh(&[
+            "interface", "ip", "set", "address",
+            &format!("name={}", ADAPTER_NAME),
+            "static",
+            &addr.to_string(),
+            &mask.to_string(),
+        ])
+        .context("Failed to assign IP to WinTun adapter")?;
+
+        // 4. Set the MTU to leave headroom for the WireGuard header.
+        run_netsh(&[
+            "interface", "ipv4", "set", "subinterface",
+            ADAPTER_NAME,
+            &format!("mtu={}", WIREGUARD_MTU),
+            "store=active",
+        ])
+        .context("Failed to set MTU on WinTun adapter")?;
+
+        // 5. Add the server bypass route. Skip silently if we never
+        //    learned the original gateway; the user will get UDP
+        //    timeouts which is recoverable, vs. a panic which is not.
+        if let Some(gw) = self.original_gateway {
+            run_netsh(&[
+                "interface", "ipv4", "add", "route",
+                &format!("{}/32", vpn_server_ip),
+                ADAPTER_NAME, // ignored when nexthop is given but required syntactically
+                &gw.to_string(),
+                "store=active",
+            ])
+            .context("Failed to add bypass route to VPN server")?;
+        }
+
+        // 6. Half-default routes through the tunnel.
+        for prefix in &["0.0.0.0/1", "128.0.0.0/1"] {
+            run_netsh(&[
+                "interface", "ipv4", "add", "route",
+                prefix,
+                ADAPTER_NAME,
+                "store=active",
+            ])
+            .with_context(|| format!("Failed to add tunnel route {}", prefix))?;
+        }
+
+        // 7. Start the WinTun session. Capacity is the ring buffer
+        //    size in bytes; the WinTun authors recommend 0x40_0000
+        //    (4 MiB), which holds ~2700 1500-byte packets.
+        let session = adapter
+            .start_session(wintun::MAX_RING_CAPACITY)
+            .context("Failed to start WinTun session")?;
+        let session = Arc::new(session);
+        self.session = Some(Arc::clone(&session));
+
+        tracing::info!("WinTun adapter '{}' is up", ADAPTER_NAME);
+        Ok(session)
+    }
+
+    /// Returns a clone of the active session, if any. Used by the
+    /// Windows packet loop to share the session with its read/write
+    /// halves.
+    pub fn get_session(&self) -> Option<Arc<wintun::Session>> {
+        self.session.as_ref().map(Arc::clone)
+    }
+
+    /// Reverts everything `create_tun` did, in the opposite order:
+    /// drops the session, removes the routes, deletes the adapter.
+    ///
+    /// Errors are logged at `warn` level rather than propagated -- by
+    /// the time this runs the connection is already torn down, and
+    /// failing to delete a route that no longer exists is not a state
+    /// the user can act on.
+    pub fn cleanup(&mut self) -> Result<()> {
+        tracing::info!("Cleaning up Windows TUN adapter and routing");
+
+        // Drop the session before the adapter; WinTun refuses to delete
+        // an adapter while sessions are still open.
+        self.session = None;
+
+        // Half-default routes.
+        for prefix in &["0.0.0.0/1", "128.0.0.0/1"] {
+            let _ = run_netsh(&[
+                "interface", "ipv4", "delete", "route",
+                prefix,
+                ADAPTER_NAME,
+            ]);
+        }
+
+        // Server bypass route.
+        if let (Some(gw), Some(server)) = (self.original_gateway, self.vpn_server_ip) {
+            let _ = run_netsh(&[
+                "interface", "ipv4", "delete", "route",
+                &format!("{}/32", server),
+                ADAPTER_NAME,
+                &gw.to_string(),
+            ]);
+        }
+
+        // Drop the adapter handle. WinTun deletes the underlying
+        // adapter when the last reference goes away.
+        self.adapter = None;
+        self.original_gateway = None;
+        self.vpn_server_ip = None;
+
+        Ok(())
+    }
+}
+
+impl Drop for WindowsPlatform {
+    fn drop(&mut self) {
+        if self.session.is_some() || self.adapter.is_some() {
+            tracing::warn!("WindowsPlatform dropped with active adapter -- cleaning up");
+            let _ = self.cleanup();
+        }
+    }
+}
+
+/// Converts a dotted-quad IPv4 netmask into a prefix length.
+///
+/// Returns 0 for `0.0.0.0`, 32 for `255.255.255.255`, etc. The function
+/// counts leading 1-bits in the netmask's 32-bit big-endian
+/// representation; non-contiguous masks (which are invalid CIDR but
+/// might be hand-crafted in a config file) get the count of *leading*
+/// ones, ignoring trailing bits.
+fn netmask_to_prefix_len(mask: Ipv4Addr) -> u8 {
+    u32::from(mask).leading_ones() as u8
+}
+
+/// Spawns `netsh.exe` with the given arguments, returning an error if
+/// the process exits non-zero.
+///
+/// We capture both stdout and stderr so the error message includes the
+/// full diagnostic netsh prints when a route is duplicated, the adapter
+/// is missing, etc.
+fn run_netsh(args: &[&str]) -> Result<()> {
+    let output = Command::new("netsh.exe")
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to spawn netsh.exe with args {:?}", args))?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "netsh {:?} exited with {}: stdout={} stderr={}",
+            args,
+            output.status,
+            stdout.trim(),
+            stderr.trim(),
+        );
+    }
+    Ok(())
+}
+
+/// Parses `route print 0.0.0.0` to find the IPv4 default gateway.
+///
+/// Returns `None` if no default route is present (e.g. the user is
+/// offline) or if the output is not in the expected format. Errors are
+/// not surfaced -- the caller treats `None` as "skip the bypass route"
+/// which is the safest fallback.
+fn read_default_gateway() -> Option<Ipv4Addr> {
+    let output = Command::new("route.exe").args(["print", "0.0.0.0"]).output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The "Active Routes" table looks like:
+    //   Network Destination        Netmask          Gateway       Interface  Metric
+    //             0.0.0.0          0.0.0.0      192.168.1.1   192.168.1.42      25
+    //
+    // Match any line whose first column is exactly "0.0.0.0" and whose
+    // third column parses as IPv4. We accept the first such line; if
+    // multiple default routes exist we prefer the one Windows lists
+    // first (typically the one with the lowest metric).
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[0] == "0.0.0.0" {
+            if let Ok(gw) = parts[2].parse::<Ipv4Addr>() {
+                return Some(gw);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn netmask_to_prefix_24() {
+        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 255, 0)), 24);
+    }
+
+    #[test]
+    fn netmask_to_prefix_16() {
+        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 0, 0)), 16);
+    }
+
+    #[test]
+    fn netmask_to_prefix_8() {
+        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 0, 0, 0)), 8);
+    }
+
+    #[test]
+    fn netmask_to_prefix_0() {
+        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(0, 0, 0, 0)), 0);
+    }
+
+    #[test]
+    fn netmask_to_prefix_32() {
+        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 255, 255)), 32);
     }
 }

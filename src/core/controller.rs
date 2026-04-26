@@ -69,14 +69,37 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use crate::config::VpnConfig;
 use crate::core::killswitch::KillSwitch;
-use crate::core::packet_loop::{run_packet_loop, PacketLoopExit};
 use crate::core::reconnect::ReconnectManager;
 use crate::core::tunnel::{base64_to_key, Tunnel, TunnelConfig};
+use crate::dns::filter::DnsFilter;
 use tokio::sync::watch;
 use zeroize::Zeroizing;
 
+// ── Platform abstraction ─────────────────────────────────────────────────────
+//
+// Each supported platform exposes a `Platform` type with `new()`,
+// `create_tun()`, and `cleanup()`, plus a `run_packet_loop` entry point.
+// The two implementations (Linux fd-based, Windows WinTun-session-based)
+// share the same surface API by re-exporting under common names so the
+// Connect handler below can treat them interchangeably.
+//
+// `TunHandle` is the platform-specific "thing the packet loop needs to do
+// I/O against the TUN device": a raw fd on Unix, a session handle on
+// Windows. Wrapping it in a type alias keeps the Connect handler free of
+// `#[cfg]` noise around the call sites.
 #[cfg(target_os = "linux")]
-use crate::platform::linux::LinuxPlatform;
+use crate::core::packet_loop::{run_packet_loop, PacketLoopExit};
+#[cfg(target_os = "linux")]
+use crate::platform::linux::LinuxPlatform as Platform;
+#[cfg(target_os = "linux")]
+type TunHandle = std::os::unix::io::RawFd;
+
+#[cfg(target_os = "windows")]
+use crate::core::packet_loop_windows::{run_packet_loop, PacketLoopExit};
+#[cfg(target_os = "windows")]
+use crate::platform::windows::WindowsPlatform as Platform;
+#[cfg(target_os = "windows")]
+type TunHandle = std::sync::Arc<wintun::Session>;
 
 /// Commands sent from the GUI to the VPN core.
 ///
@@ -109,6 +132,12 @@ pub enum VpnEvent {
     Error(String),
     /// Informational log message for the status bar
     Info(String),
+    /// A newer release is available on GitHub. The string is the version
+    /// number (without leading `v`), e.g. `"0.2.0"`.
+    ///
+    /// Sent by the background update checker (spawned in `main`) and
+    /// rendered as a dismissable banner in the GUI.
+    UpdateAvailable(String),
 }
 
 /// Simplified VPN state for the GUI layer.
@@ -143,6 +172,11 @@ pub struct VpnController {
     /// Receive events from the async VPN worker.
     /// Wrapped in `Option` so `take_event_rx()` can move it out exactly once.
     event_rx: Option<mpsc::Receiver<VpnEvent>>,
+    /// A clone of the event sender, exposed for code outside the worker
+    /// (e.g. the background update checker spawned in `main`) that needs
+    /// to push events into the GUI's event channel without going through
+    /// the VPN command pipeline.
+    external_event_tx: mpsc::Sender<VpnEvent>,
 }
 
 impl VpnController {
@@ -160,6 +194,9 @@ impl VpnController {
         // Clone before the spawn so the worker can re-issue Connect commands
         // for auto-reconnect without needing access to the VpnController struct.
         let command_tx_worker = command_tx.clone();
+        // Clone retained on the controller so external producers (the update
+        // checker in `main`) can push events without going through the worker.
+        let external_event_tx = event_tx.clone();
 
         // Spawn the async worker in a dedicated thread
         std::thread::Builder::new()
@@ -182,7 +219,16 @@ impl VpnController {
         Self {
             command_tx,
             event_rx: Some(event_rx),
+            external_event_tx,
         }
+    }
+
+    /// Returns a clone of the event sender so external code (such as the
+    /// background update checker spawned in `main`) can push events --
+    /// notably [`VpnEvent::UpdateAvailable`] -- into the GUI's event
+    /// channel without going through the VPN worker.
+    pub fn external_event_sender(&self) -> mpsc::Sender<VpnEvent> {
+        self.external_event_tx.clone()
     }
 
     /// Sends a command to the VPN core (non-blocking).
@@ -246,23 +292,74 @@ impl VpnController {
         let mut kill_switch_enabled = false;
         let mut last_server_ip: Option<std::net::IpAddr> = None;
 
-        // ── Private key ──────────────────────────────────────────────────────
-        // Loaded once at worker startup so it is ready the moment Connect
+        // ── Private key + tunnel address ─────────────────────────────────────
+        // Loaded once at worker startup so they are ready the moment Connect
         // arrives, without blocking the async loop with config I/O.
-        // Stored as Option so a key-gen failure degrades gracefully: the Connect
-        // handler checks for None and emits an error event to the GUI.
-        let client_private_key: Option<Zeroizing<[u8; 32]>> = {
+        // Stored as Options so a load/parse failure degrades gracefully: the
+        // Connect handler checks for None and emits an error event to the GUI.
+        let (client_private_key, client_tun_addr, dns_filter): (
+            Option<Zeroizing<[u8; 32]>>,
+            Option<((u8, u8, u8, u8), (u8, u8, u8, u8))>,
+            Option<Arc<DnsFilter>>,
+        ) = {
             let mut cfg = VpnConfig::load().unwrap_or_default();
-            match cfg.get_or_create_private_key() {
-                Ok(key) => {
+            let key = match cfg.get_or_create_private_key() {
+                Ok(k) => {
                     tracing::info!("Client private key loaded");
-                    Some(key)
+                    Some(k)
                 }
                 Err(e) => {
                     tracing::error!("Failed to load/generate private key: {}", e);
                     None
                 }
-            }
+            };
+            let tun_addr = match cfg.client_tun_address() {
+                Ok(a) => {
+                    tracing::info!(
+                        "Client TUN address: {}.{}.{}.{}/{}.{}.{}.{}",
+                        a.0 .0, a.0 .1, a.0 .2, a.0 .3,
+                        a.1 .0, a.1 .1, a.1 .2, a.1 .3
+                    );
+                    Some(a)
+                }
+                Err(e) => {
+                    tracing::error!("Invalid client TUN address in config: {}", e);
+                    None
+                }
+            };
+            // ── DNS filter (built once, shared across reconnects) ───────────
+            // Wrapped in Arc so the packet loop holds a cheap clone without
+            // taking ownership; the same filter is reused for every Connect
+            // until the worker exits.
+            //
+            // Build only when the user has opted into DNS filtering; if they
+            // disable it we pass `None` to the packet loop, which short-
+            // circuits the interception check entirely (zero overhead).
+            //
+            // A construction failure (e.g. blocklist parse error in a
+            // future revision) is logged and treated as "no filter" rather
+            // than blocking startup -- ad blocking is a feature, not a
+            // hard requirement for the VPN to function.
+            let dns_filter = if cfg.dns_filtering_protection_enabled {
+                match DnsFilter::new() {
+                    Ok(f) => {
+                        tracing::info!(
+                            "DNS filter ready ({} blocked domains)",
+                            f.blocked_domain_count()
+                        );
+                        Some(Arc::new(f))
+                    }
+                    Err(e) => {
+                        tracing::warn!("DNS filter init failed, disabling: {}", e);
+                        None
+                    }
+                }
+            } else {
+                tracing::info!("DNS filtering disabled by user preference");
+                None
+            };
+
+            (key, tun_addr, dns_filter)
         };
 
         // ── Auto-reconnect state ─────────────────────────────────────────────
@@ -282,10 +379,10 @@ impl VpnController {
         //   Dropping it removes routing rules and closes the original TUN fd.
         //   The packet loop keeps the device alive via its own dup'd fd until
         //   the stop signal propagates.
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let mut stop_tx: Option<watch::Sender<bool>> = None;
-        #[cfg(target_os = "linux")]
-        let mut active_platform: Option<LinuxPlatform> = None;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let mut active_platform: Option<Platform> = None;
 
         loop {
             // `.await` yields to the tokio runtime while the channel is empty,
@@ -302,7 +399,7 @@ impl VpnController {
                 VpnCommand::Connect { server_endpoint, server_public_key_base64 } => {
                     // Abort any running session before starting a new one.
                     // Handles rapid Connect→Connect without an intervening Disconnect.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
                     {
                         if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
                         if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }
@@ -355,7 +452,7 @@ impl VpnController {
                     //   6. Wrap Tunnel in Arc<Mutex> for shared mutable access
                     //   7. Spawn run_packet_loop as a concurrent Tokio task
                     //   8. Record success and notify the GUI
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
                     {
                         // Step 1
                         let private_key = match client_private_key.as_ref() {
@@ -387,7 +484,7 @@ impl VpnController {
                         // Steps 3 + 4
                         // 10.8.0.2/24 is the conventional VPN client address.
                         // Production builds would receive this from the server.
-                        let mut platform = match LinuxPlatform::new() {
+                        let mut platform = match Platform::new() {
                             Ok(p) => p,
                             Err(e) => {
                                 let _ = event_tx.send(VpnEvent::Error(
@@ -398,20 +495,63 @@ impl VpnController {
                             }
                         };
 
-                        let tun_fd = {
-                            use std::os::unix::io::AsRawFd;
-                            match platform.create_tun(
-                                (10, 8, 0, 2),
-                                (255, 255, 255, 0),
-                                server_addr.ip(),
-                            ) {
-                                Ok(dev) => dev.as_raw_fd(),
-                                Err(e) => {
-                                    let _ = event_tx.send(VpnEvent::Error(
-                                        format!("TUN device creation failed: {}", e),
-                                    ));
-                                    let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
-                                    continue;
+                        // Use the configured client TUN address (falls back
+                        // to 10.8.0.2/24 when the user hasn't set one).
+                        // If the config field was set but unparseable, the
+                        // worker startup logged the error and stored None;
+                        // emit a user-visible error and abort the connect
+                        // rather than silently substituting the default.
+                        let (tun_ip_octets, tun_mask_octets) = match client_tun_addr {
+                            Some(a) => a,
+                            None => {
+                                let _ = event_tx.send(VpnEvent::Error(
+                                    "Invalid client_tun_ip_cidr in config (see startup log)"
+                                        .to_string(),
+                                ));
+                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                continue;
+                            }
+                        };
+
+                        // Adapt the platform-specific create_tun result into
+                        // the common `TunHandle` type. On Linux that is the
+                        // raw fd of the TUN device; on Windows it is the
+                        // WinTun session. Each cfg branch is straight-line
+                        // code so error handling stays uniform.
+                        let tun_handle: TunHandle = {
+                            #[cfg(target_os = "linux")]
+                            {
+                                use std::os::unix::io::AsRawFd;
+                                match platform.create_tun(
+                                    tun_ip_octets,
+                                    tun_mask_octets,
+                                    server_addr.ip(),
+                                ) {
+                                    Ok(dev) => dev.as_raw_fd(),
+                                    Err(e) => {
+                                        let _ = event_tx.send(VpnEvent::Error(
+                                            format!("TUN device creation failed: {}", e),
+                                        ));
+                                        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                        continue;
+                                    }
+                                }
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                match platform.create_tun(
+                                    tun_ip_octets,
+                                    tun_mask_octets,
+                                    server_addr.ip(),
+                                ) {
+                                    Ok(session) => session,
+                                    Err(e) => {
+                                        let _ = event_tx.send(VpnEvent::Error(
+                                            format!("TUN device creation failed: {}", e),
+                                        ));
+                                        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                        continue;
+                                    }
                                 }
                             }
                         };
@@ -501,13 +641,17 @@ impl VpnController {
                         let command_tx_loop = command_tx.clone();
                         let server_endpoint_loop = server_endpoint.clone();
                         let server_pub_key_loop = server_public_key_base64.clone();
+                        // Cheap Arc clone -- the filter itself is built once
+                        // at worker startup and shared across reconnects.
+                        let dns_filter_loop = dns_filter.clone();
 
                         tokio::spawn(async move {
                             let exit = run_packet_loop(
                                 tunnel_for_loop,
-                                tun_fd,
+                                tun_handle,
                                 server_addr,
                                 stop_receiver,
+                                dns_filter_loop,
                             )
                             .await;
 
@@ -552,10 +696,10 @@ impl VpnController {
                         ));
                     }
 
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
                     {
                         let _ = event_tx.send(VpnEvent::Error(
-                            "Tunnel bring-up is only implemented on Linux in this build"
+                            "Tunnel bring-up is not implemented on this platform"
                                 .to_string(),
                         ));
                         let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
@@ -567,7 +711,7 @@ impl VpnController {
                     // Stop the packet loop before removing the TUN device.
                     // The stop signal gives the loop a chance to flush in-flight
                     // packets; then cleanup removes routes and drops the fd.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
                     {
                         if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
                         if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }
@@ -628,7 +772,7 @@ impl VpnController {
 
                     // Tear down the packet loop and TUN device, same sequence
                     // as Disconnect (but no state-change event since we're exiting).
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
                     {
                         if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
                         if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }

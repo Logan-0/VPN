@@ -97,3 +97,11 @@ pub mod server;
 /// - Update notification
 /// - Download links
 pub mod update;
+
+/// Privilege minimization (drop capabilities, capture invoking user).
+///
+/// Linux-specific hardening that strips every capability except
+/// `CAP_NET_ADMIN` so a bug in the GUI/HTTP/config layers cannot escalate
+/// to a full root compromise. On non-Linux platforms the functions are
+/// no-ops.
+pub mod privilege;

@@ -162,6 +162,36 @@ pub struct VpnConfig {
     /// - Never logged or transmitted in plaintext
     #[serde(default)]
     pub client_private_key_base64: Option<String>,
+
+    /// The IPv4 address assigned to the client side of the WireGuard tunnel,
+    /// in `address/prefix` form (e.g., `"10.8.0.2/24"`).
+    ///
+    /// ## Why This Exists
+    ///
+    /// WireGuard servers maintain an allowlist that maps each client public key
+    /// to a specific tunnel IP. Hardcoding the client IP works for a single
+    /// device on a server provisioned for `10.8.0.2/24`, but breaks when:
+    ///
+    /// - Multiple clients share one config bundle (each needs a unique IP)
+    /// - The server uses a different subnet (e.g., `10.6.0.0/24`)
+    /// - The user runs RustVPN on multiple devices with the same server
+    ///
+    /// ## Format
+    ///
+    /// `"<ipv4>/<prefix>"`. Examples:
+    /// - `"10.8.0.2/24"`
+    /// - `"10.6.0.5/24"`
+    /// - `"172.16.0.10/16"`
+    ///
+    /// Invalid values cause the connect attempt to fail with a parse error
+    /// rather than silently falling back, so misconfiguration is loud.
+    ///
+    /// ## Default Behavior
+    ///
+    /// `None` -> the controller falls back to `"10.8.0.2/24"`, matching the
+    /// historical hardcoded value so existing configs keep working unchanged.
+    #[serde(default)]
+    pub client_tun_ip_cidr: Option<String>,
 }
 
 impl Default for VpnConfig {
@@ -190,6 +220,7 @@ impl Default for VpnConfig {
             selected_vpn_server_identifier: None,
             custom_dns_server_address: None,
             client_private_key_base64: None,
+            client_tun_ip_cidr: None,
         }
     }
 }
@@ -413,6 +444,80 @@ impl VpnConfig {
         tracing::info!("Generated and saved a new WireGuard client private key");
         Ok(Zeroizing::new(key_bytes))
     }
+
+    /// Resolves the client's TUN IP and netmask as octet tuples for the
+    /// platform layer.
+    ///
+    /// Returns `(ip_octets, netmask_octets)` where each tuple is `(u8, u8, u8, u8)`.
+    ///
+    /// ## Why This Method Exists
+    ///
+    /// Two layers need this information in different shapes:
+    /// - The Linux platform's `create_tun` takes `(u8, u8, u8, u8)` tuples
+    ///   directly (no Rust standard type exists for "IPv4 + netmask" pair).
+    /// - The config file stores it as a single human-readable CIDR string
+    ///   (`"10.8.0.2/24"`).
+    ///
+    /// Centralising the parse + conversion here keeps the controller free of
+    /// CIDR parsing logic and gives a single place to handle invalid input.
+    ///
+    /// ## Default
+    ///
+    /// `None` config field -> `("10.8.0.2", "255.255.255.0")` -- the value
+    /// the controller used before this field existed.
+    ///
+    /// ## Errors
+    ///
+    /// Returns `Err` if the stored CIDR cannot be parsed, the address is not
+    /// IPv4, or the prefix length exceeds 32. The connect handler propagates
+    /// this to the GUI as a user-visible error.
+    pub fn client_tun_address(&self) -> Result<((u8, u8, u8, u8), (u8, u8, u8, u8))> {
+        let cidr = self
+            .client_tun_ip_cidr
+            .as_deref()
+            .unwrap_or("10.8.0.2/24");
+        parse_ipv4_cidr(cidr)
+            .with_context(|| format!("Invalid client_tun_ip_cidr '{}'", cidr))
+    }
+}
+
+/// Parses an IPv4 `address/prefix` string into octet tuples.
+///
+/// Returns `(address_octets, netmask_octets)`. Used by
+/// [`VpnConfig::client_tun_address`].
+///
+/// ## Examples
+///
+/// - `"10.8.0.2/24"` -> `((10, 8, 0, 2), (255, 255, 255, 0))`
+/// - `"172.16.0.10/16"` -> `((172, 16, 0, 10), (255, 255, 0, 0))`
+/// - `"10.0.0.1/8"` -> `((10, 0, 0, 1), (255, 0, 0, 0))`
+fn parse_ipv4_cidr(cidr: &str) -> Result<((u8, u8, u8, u8), (u8, u8, u8, u8))> {
+    let (addr_part, prefix_part) = cidr
+        .split_once('/')
+        .context("missing '/' between address and prefix length")?;
+
+    let addr: std::net::Ipv4Addr = addr_part
+        .parse()
+        .context("address is not a valid IPv4 literal")?;
+    let prefix: u8 = prefix_part
+        .parse()
+        .context("prefix length is not a number")?;
+    if prefix > 32 {
+        anyhow::bail!("prefix length {} exceeds 32", prefix);
+    }
+
+    // Build the netmask by shifting `prefix` ones into the high bits.
+    // `prefix == 0` is special-cased because shifting a u32 by 32 is UB.
+    let mask_u32: u32 = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    let mask = std::net::Ipv4Addr::from(mask_u32);
+
+    let a = addr.octets();
+    let m = mask.octets();
+    Ok(((a[0], a[1], a[2], a[3]), (m[0], m[1], m[2], m[3])))
 }
 
 #[cfg(test)]

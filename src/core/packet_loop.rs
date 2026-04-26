@@ -62,6 +62,8 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 use crate::core::tunnel::Tunnel;
+use crate::dns::filter::DnsFilter;
+use crate::dns::intercept::try_block_dns_query;
 
 /// Maximum Transmission Unit for the TUN device (standard Ethernet)
 const TUN_MTU: usize = 1500;
@@ -97,6 +99,9 @@ pub enum PacketLoopExit {
 ///   reads in a blocking thread pool
 /// * `server_addr` - UDP endpoint of the VPN server
 /// * `stop_rx` - Watch channel receiver; set to `true` to stop the loop
+/// * `dns_filter` - Optional ad/malware blocklist applied to outbound
+///   DNS queries before encryption. `None` disables DNS interception
+///   and every packet is passed through to `encapsulate` as before.
 ///
 /// ## Returns
 ///
@@ -106,6 +111,7 @@ pub async fn run_packet_loop(
     tun_fd: std::os::unix::io::RawFd,
     server_addr: SocketAddr,
     mut stop_rx: watch::Receiver<bool>,
+    dns_filter: Option<Arc<DnsFilter>>,
 ) -> PacketLoopExit {
     info!("Starting packet processing loop -> {}", server_addr);
 
@@ -188,6 +194,24 @@ pub async fn run_packet_loop(
 
             // --- Outgoing: TUN -> Encrypt -> UDP ---
             Some(packet) = tun_rx.recv() => {
+                // ── DNS interception ────────────────────────────────
+                // Inspect the packet before it is encrypted. If it is a
+                // DNS query for a blocked domain we synthesise a reply
+                // and write it straight back to the TUN device, skipping
+                // the tunnel entirely. The application sees a normal
+                // (negative) DNS answer and never connects to the
+                // blocked host.
+                if let Some(filter) = dns_filter.as_ref() {
+                    if let Some(reply) = try_block_dns_query(&packet, filter) {
+                        if let Err(e) = tun_writer.write_all(&reply) {
+                            warn!("Failed to write blocked DNS reply to TUN: {}", e);
+                        } else {
+                            debug!("DNS query blocked locally ({} bytes returned)", reply.len());
+                        }
+                        continue;
+                    }
+                }
+
                 let mut encrypted = vec![0u8; packet.len() + WIREGUARD_OVERHEAD];
                 let send_result = {
                     let mut tun_lock = match tunnel.lock() {

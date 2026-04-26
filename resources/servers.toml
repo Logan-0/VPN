@@ -1,13 +1,39 @@
 # RustVPN Server Configuration
-# This file contains the list of available VPN servers
+# ============================================================================
+# This file lists the VPN servers RustVPN can connect to. It is loaded by
+# `ServerManager::new()` (src/server.rs) at application startup.
+#
+# IMPORTANT: PLACEHOLDER VALUES
+# -----------------------------
+# The endpoints and public keys below are **placeholders** for development
+# and testing. They use:
+#   - RFC 5737 (TEST-NET-1) IPs (203.0.113.0/24) which are reserved for
+#     documentation and never routable on the public internet.
+#   - Cryptographically random 32-byte values base64-encoded as WireGuard
+#     X25519 public keys. They are the correct shape and will parse, but
+#     no real WireGuard server holds the matching private key, so a real
+#     Noise handshake will fail.
+#
+# This makes the full code path -- TUN creation, kill switch activation,
+# Noise handshake start -- exercisable end-to-end without spinning up
+# real VPN infrastructure. Replace with real values before publishing.
+#
+# To swap in real servers:
+#   1. Set `server_endpoint_address` to "<public_ip>:<udp_port>"
+#   2. Set `server_public_key_base64` to the output of `wg pubkey` on the
+#      server's public key file
+#   3. Ensure the server is configured to route the client's TUN IP
+#      (default 10.8.0.2/24, configurable via `client_tun_ip_cidr` in
+#      the user's config.toml).
 
+# ── United States ────────────────────────────────────────────────────────────
 [[servers]]
 server_identifier = "us-california-1"
 server_display_name = "US-California-1"
 server_country_code = "US"
 server_state_name = "California"
 server_endpoint_address = "203.0.113.1:51820"
-server_public_key_base64 = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk="
+server_public_key_base64 = "fqAoG82Ku44Zb7JIQ+6IDUY9cUqdU1AF1L+gvUTdzUQ="
 
 [[servers]]
 server_identifier = "us-new-york-1"
@@ -15,7 +41,7 @@ server_display_name = "US-NewYork-1"
 server_country_code = "US"
 server_state_name = "New York"
 server_endpoint_address = "203.0.113.2:51820"
-server_public_key_base64 = "BIr9J3xutjF2FzQcYRLgG4M9uZmzJQN8w7yXZqH2X1E="
+server_public_key_base64 = "cvn9hBiqgbpbsaHRmIN8TU7xvSkGY/wMGsR7xWXakNs="
 
 [[servers]]
 server_identifier = "us-texas-1"
@@ -23,7 +49,7 @@ server_display_name = "US-Texas-1"
 server_country_code = "US"
 server_state_name = "Texas"
 server_endpoint_address = "203.0.113.3:51820"
-server_public_key_base64 = "C8s9K4yvuG3H2AzRdSHkH5N0a1n4K9O8w7yXZqH2X1F="
+server_public_key_base64 = "C+yMRPbMJCxjkHWsk4zGGDSr5CJwbwsSPPpr0qj/HNo="
 
 [[servers]]
 server_identifier = "us-florida-1"
@@ -31,15 +57,16 @@ server_display_name = "US-Florida-1"
 server_country_code = "US"
 server_state_name = "Florida"
 server_endpoint_address = "203.0.113.4:51820"
-server_public_key_base64 = "D9t0L5zwvH4I3B2SeTIL6O1b2o5L0P9x8z0YKrI3Y2G="
+server_public_key_base64 = "5hTPl258ovLaeblTMpEX52wyK9txTw1BUAfLrJ1f2jc="
 
+# ── Sweden ───────────────────────────────────────────────────────────────────
 [[servers]]
 server_identifier = "sweden-stockholm-1"
 server_display_name = "Sweden-Stockholm-1"
 server_country_code = "SE"
 server_state_name = "Stockholm"
 server_endpoint_address = "203.0.113.10:51820"
-server_public_key_base64 = "E0u1M6axwI5J4C3TfUJM7P2c3p6M1Q0y9a1LsJ4K3H2"
+server_public_key_base64 = "3T0r5tJxyiSoVGSfmP9VTHBK9MrL4+xYx+3Lgrlc77c="
 
 [[servers]]
 server_identifier = "sweden-goteborg-1"
@@ -47,7 +74,7 @@ server_display_name = "Sweden-Gothenburg-1"
 server_country_code = "SE"
 server_state_name = "Gothenburg"
 server_endpoint_address = "203.0.113.11:51820"
-server_public_key_base64 = "F1v2N7byxJ6K5D4UgVKN8Q3d4q7N2R1z0b2MtK5L4I3"
+server_public_key_base64 = "W5l1F0D7nFhHmHrj9PdvIA3Rw7yV/rq8l9/IJJvGv58="
 
 [[servers]]
 server_identifier = "sweden-malmo-1"
@@ -55,15 +82,16 @@ server_display_name = "Sweden-Malmö-1"
 server_country_code = "SE"
 server_state_name = "Malmö"
 server_endpoint_address = "203.0.113.12:51820"
-server_public_key_base64 = "G2w3O8czK7L6E5VhWLO9R4e5r8O3S2a1c3NuL6M5J4"
+server_public_key_base64 = "rSz0mNCUpMGIhQ8MHsmUuj0u7x12aM+XGqy+hrE/H0Q="
 
+# ── Germany ──────────────────────────────────────────────────────────────────
 [[servers]]
 server_identifier = "germany-berlin-1"
 server_display_name = "Germany-Berlin-1"
 server_country_code = "DE"
 server_state_name = "Berlin"
 server_endpoint_address = "203.0.113.20:51820"
-server_public_key_base64 = "H3x4P9daL8M7F6WiXMP0S5f6s9P4T3b2d4OvM7N6K5"
+server_public_key_base64 = "L60RCjxOsjmul/au0kuIdFfpwX49vy2dONzjidZkbv8="
 
 [[servers]]
 server_identifier = "germany-frankfurt-1"
@@ -71,4 +99,4 @@ server_display_name = "Germany-Frankfurt-1"
 server_country_code = "DE"
 server_state_name = "Frankfurt"
 server_endpoint_address = "203.0.113.21:51820"
-server_public_key_base64 = "I4y5Q0ebM9N8G7XjYNQ1T6g7t0Q5U4c3e5PwN8O7L6"
+server_public_key_base64 = "z7Eb/VCGZAt6QCoNi9zq6cjj2bKDDVRYy2C+rpwww+o="

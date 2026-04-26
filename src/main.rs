@@ -26,8 +26,8 @@
 
 use rust_vpn::config::VpnConfig;
 use rust_vpn::gui::app::VpnApp;
+use rust_vpn::privilege;
 use rust_vpn::server::ServerManager;
-use rust_vpn::update::UpdateChecker;
 use anyhow::Result;
 
 /// Main entry point for the RustVPN application
@@ -58,14 +58,39 @@ fn main() {
     tracing_subscriber::fmt::init();
     
     tracing::info!("RustVPN starting...");
-    
+
+    // Capture the invoking user's UID/GID *before* anything else runs.
+    // The environment is mutable; freezing this value at the top of main
+    // protects it from later library code that might unset SUDO_UID.
+    // The captured value is currently logged for diagnostics; future work
+    // can pass it to a setuid-based privilege drop if reconnects are
+    // disabled (see src/privilege.rs).
+    if let Some((uid, gid)) = privilege::capture_invoking_user() {
+        tracing::info!(
+            "Invoked via sudo by UID={} GID={} (retained for future privilege drops)",
+            uid,
+            gid
+        );
+    }
+
     // Check for required privileges
     if !check_privileges() {
         eprintln!("Error: RustVPN requires root/administrator privileges to create TUN devices and configure routing.");
         eprintln!("Please run with sudo (Linux/macOS) or as Administrator (Windows).");
         std::process::exit(1);
     }
-    
+
+    // Drop every Linux capability except CAP_NET_ADMIN now that we have
+    // confirmed we hold the privileges we need. This runs *before* config
+    // load, server-list parsing, and the update-check HTTP request -- so
+    // a bug in any of those code paths cannot exercise capabilities like
+    // CAP_DAC_OVERRIDE, CAP_SYS_ADMIN, or CAP_KILL. The TUN device and
+    // routing-table operations needed for Connect/Disconnect continue to
+    // work because they only require CAP_NET_ADMIN.
+    if let Err(e) = privilege::minimize_capabilities() {
+        tracing::warn!("Capability minimization failed: {}", e);
+    }
+
     // Load configuration from disk
     let config = match VpnConfig::load() {
         Ok(cfg) => {
@@ -84,18 +109,12 @@ fn main() {
         std::process::exit(1);
     }
     
-    // Spawn background thread so the update check never delays GUI startup
-    std::thread::spawn(|| {
-        if let Ok(rt) = tokio::runtime::Runtime::new() {
-            let update_checker = UpdateChecker::new(env!("CARGO_PKG_VERSION").to_string());
-            rt.block_on(async {
-                if let Err(e) = check_updates(&update_checker).await {
-                    tracing::warn!("Failed to check for updates: {}", e);
-                }
-            });
-        }
-    });
-    
+    // The update check is now spawned inside `VpnApp::new()` so the result
+    // can be routed back to the GUI as a dismissable `UpdateAvailable` banner
+    // (see `src/gui/app.rs`). Keeping it here would either duplicate the
+    // network call or require plumbing the controller's event sender out
+    // through `main`, both of which we want to avoid.
+
     // Run the Iced GUI application (cross-platform, pure Rust, Elm architecture)
     // The GUI provides user control over VPN networking operations
     tracing::info!("Starting GUI application...");
@@ -187,22 +206,3 @@ fn validate_config(config: &VpnConfig) -> Result<()> {
     Ok(())
 }
 
-/// Checks for application updates from GitHub releases
-/// 
-/// This is a non-blocking check that logs if an update is available.
-/// It does not force updates or interrupt the user.
-async fn check_updates(update_checker: &UpdateChecker) -> Result<()> {
-    match update_checker.check_for_updates().await {
-        Ok(Some(version)) => {
-            tracing::info!("Update available: {}", version);
-            tracing::info!("Please download the latest version from GitHub releases");
-        }
-        Ok(None) => {
-            tracing::debug!("No updates available");
-        }
-        Err(e) => {
-            tracing::warn!("Failed to check for updates: {}", e);
-        }
-    }
-    Ok(())
-}
