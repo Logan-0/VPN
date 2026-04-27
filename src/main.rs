@@ -135,6 +135,10 @@ fn check_privileges() -> bool {
         // Check if running as root
         if nix::unistd::Uid::effective().is_root() {
             tracing::info!("Running as root");
+            eprintln!("Note: Running as root may cause GUI display issues.");
+            eprintln!("Consider running with CAP_NET_ADMIN capability instead:");
+            eprintln!("  sudo setcap cap_net_admin+ep ./target/release/rust-vpn");
+            eprintln!("  ./target/release/rust-vpn");
             return true;
         }
         
@@ -147,6 +151,16 @@ fn check_privileges() -> bool {
         }
         
         tracing::error!("Not running as root or with CAP_NET_ADMIN capability");
+        eprintln!("Error: RustVPN requires CAP_NET_ADMIN capability to create TUN devices and configure routing.");
+        eprintln!();
+        eprintln!("To grant the required capability, run:");
+        eprintln!("  sudo setcap cap_net_admin+ep ./target/release/rust-vpn");
+        eprintln!();
+        eprintln!("Or use the automated setup script:");
+        eprintln!("  ./setup.sh");
+        eprintln!();
+        eprintln!("Then run the application as a normal user:");
+        eprintln!("  ./target/release/rust-vpn");
         false
     }
     

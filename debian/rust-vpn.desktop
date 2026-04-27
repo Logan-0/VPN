@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=RustVPN
+Comment=Secure WireGuard VPN client with kill switch and DNS filtering
+Exec=rust-vpn
+Icon=rust-vpn
+Terminal=false
+Type=Application
+Categories=Network;VPN;
+Keywords=vpn;wireguard;security;privacy;network;

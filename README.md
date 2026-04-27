@@ -223,17 +223,131 @@ The other blocks are completely ignored by the compiler.
 cargo build --release
 ```
 
-## Running
+## Running on Any Linux Machine
 
-Root or administrator privileges are required to create TUN devices and modify
-firewall rules.
+### Prerequisites
+
+Install required system dependencies:
 
 ```bash
-# Linux / macOS
-sudo ./target/release/rust-vpn
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y pkg-config libgtk-4-dev libssl-dev
 
-# Windows
-# Run the executable as Administrator
+# Fedora/RHEL
+sudo dnf install -y pkg-config gtk4-devel openssl-devel
+
+# Arch Linux
+sudo pacman -S pkg-config gtk4 openssl
+```
+
+### Quick Start (Recommended)
+
+1. Build the release binary:
+```bash
+cargo build --release
+```
+
+2. Run the setup script to grant required capabilities:
+```bash
+./setup.sh
+```
+
+3. Run the application:
+```bash
+./target/release/rust-vpn
+```
+
+### Manual Setup
+
+If the setup script doesn't work, you can manually grant the capability:
+
+```bash
+# Grant CAP_NET_ADMIN capability
+sudo setcap cap_net_admin+ep ./target/release/rust-vpn
+
+# Run as normal user
+./target/release/rust-vpn
+```
+
+### Why CAP_NET_ADMIN is Needed
+
+The GUI requires display server access (X11/Wayland), which doesn't work well when running as root. Granting the `CAP_NET_ADMIN` capability allows the app to:
+- Run as a normal user (proper GUI display access)
+- Create TUN virtual network devices
+- Configure routing tables
+- Install firewall rules (kill switch)
+
+This provides the minimum necessary privileges without the security risks of running the entire GUI as root.
+
+### Troubleshooting
+
+If you see "Not running as root or with CAP_NET_ADMIN capability":
+- Run `./setup.sh` to automatically grant the capability
+- Or manually run: `sudo setcap cap_net_admin+ep ./target/release/rust-vpn`
+
+If the GUI doesn't display:
+- Ensure you're running as a normal user (not root)
+- Check that DISPLAY is set: `echo $DISPLAY`
+- Try running without Wayland: `WAYLAND_DISPLAY= ./target/release/rust-vpn`
+
+## Running on macOS / Windows
+
+### macOS
+
+Root privileges are required:
+
+```bash
+sudo ./target/release/rust-vpn
+```
+
+### Windows
+
+Run the executable as Administrator.
+
+## Debian Package Installation (.deb)
+
+### Building a .deb Package
+
+To create a Debian package for easy installation on any Debian-based system:
+
+```bash
+# Install cargo-deb
+cargo install cargo-deb
+
+# Build the .deb package
+cargo deb
+```
+
+This creates a `.deb` file in `target/debian/` that includes:
+- The compiled binary
+- Automatic capability setup via post-install script
+- Desktop entry for application launcher
+- Icon files
+
+### Installing from .deb
+
+```bash
+# Install the package
+sudo dpkg -i target/debian/rust-vpn_*.deb
+
+# If there are dependency issues, fix them:
+sudo apt-get install -f
+```
+
+The .deb package automatically:
+- Installs the binary to `/usr/bin/rust-vpn`
+- Sets CAP_NET_ADMIN capability on the binary
+- Creates a desktop entry in `/usr/share/applications/`
+- Installs icons to `/usr/share/icons/`
+
+### Running After .deb Installation
+
+```bash
+# Run from command line
+rust-vpn
+
+# Or launch from application menu
 ```
 
 ### Configuration File Location

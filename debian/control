@@ -1,0 +1,19 @@
+[package.metadata.deb]
+name = "rust-vpn"
+maintainer = "RustVPN Team <support@rustvpn.example>"
+copyright = "2025, RustVPN Team"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+A secure, lightweight VPN client written in Rust using the WireGuard protocol.
+It includes a graphical interface, a kill switch, DNS filtering, and automatic
+reconnection — all cross-platform across Linux, macOS, and Windows.
+"""
+depends = "$auto"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/rust-vpn", "usr/bin/rust-vpn", "755"],
+    ["README.md", "usr/share/doc/rust-vpn/README", "644"],
+]
+conflicts = ["openvpn", "wireguard"]
+maintainer-scripts = "debian/"

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+# Post-installation script for rust-vpn
+# Sets CAP_NET_ADMIN capability on the binary
+
+BINARY_PATH="/usr/bin/rust-vpn"
+
+echo "Setting up RustVPN..."
+
+# Set CAP_NET_ADMIN capability
+if setcap cap_net_admin+ep "$BINARY_PATH"; then
+    echo "CAP_NET_ADMIN capability set successfully on $BINARY_PATH"
+else
+    echo "Warning: Failed to set CAP_NET_ADMIN capability on $BINARY_PATH"
+    echo "The application may not function correctly without this capability."
+    echo "You can manually set it with: sudo setcap cap_net_admin+ep /usr/bin/rust-vpn"
+fi
+
+exit 0
