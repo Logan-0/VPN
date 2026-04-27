@@ -328,15 +328,10 @@ impl Drop for WindowsPlatform {
     }
 }
 
-/// Converts a dotted-quad IPv4 netmask into a prefix length.
-///
-/// Returns 0 for `0.0.0.0`, 32 for `255.255.255.255`, etc. The function
-/// counts leading 1-bits in the netmask's 32-bit big-endian
-/// representation; non-contiguous masks (which are invalid CIDR but
-/// might be hand-crafted in a config file) get the count of *leading*
-/// ones, ignoring trailing bits.
-fn netmask_to_prefix_len(mask: Ipv4Addr) -> u8 {
-    u32::from(mask).leading_ones() as u8
+/// Converts an IPv4 netmask to its prefix length (e.g., 255.255.255.0 -> 24).
+/// This is the inverse of the standard prefix-to-netmask conversion.
+pub fn netmask_to_prefix_len(netmask: Ipv4Addr) -> u8 {
+    u32::from(netmask).leading_ones() as u8
 }
 
 /// Spawns `netsh.exe` with the given arguments, returning an error if
@@ -392,34 +387,4 @@ fn read_default_gateway() -> Option<Ipv4Addr> {
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn netmask_to_prefix_24() {
-        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 255, 0)), 24);
-    }
-
-    #[test]
-    fn netmask_to_prefix_16() {
-        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 0, 0)), 16);
-    }
-
-    #[test]
-    fn netmask_to_prefix_8() {
-        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 0, 0, 0)), 8);
-    }
-
-    #[test]
-    fn netmask_to_prefix_0() {
-        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(0, 0, 0, 0)), 0);
-    }
-
-    #[test]
-    fn netmask_to_prefix_32() {
-        assert_eq!(netmask_to_prefix_len(Ipv4Addr::new(255, 255, 255, 255)), 32);
-    }
 }

@@ -52,20 +52,12 @@
 
 use crate::dns::filter::DnsFilter;
 
-/// IPv4 protocol number for UDP, per IANA assignments.
-const IP_PROTOCOL_UDP: u8 = 17;
-
-/// The well-known UDP port DNS servers listen on.
-const DNS_PORT: u16 = 53;
-
-/// DNS resource-record type "A" (IPv4 host address).
-const DNS_TYPE_A: u16 = 1;
-
-/// DNS resource-record type "AAAA" (IPv6 host address).
-const DNS_TYPE_AAAA: u16 = 28;
-
-/// DNS class "IN" (Internet).
-const DNS_CLASS_IN: u16 = 1;
+/// DNS protocol constants
+pub const DNS_TYPE_A: u16 = 1;       // Type A: IPv4 address
+pub const DNS_TYPE_AAAA: u16 = 28;   // Type AAAA: IPv6 address
+pub const DNS_CLASS_IN: u16 = 1;     // Class IN: Internet
+pub const DNS_PORT: u16 = 53;        // Standard DNS port
+pub const IP_PROTOCOL_UDP: u8 = 17;  // UDP protocol number
 
 /// TTL we attach to synthesised block responses, in seconds.
 ///
@@ -226,7 +218,7 @@ pub fn try_block_dns_query(packet: &[u8], filter: &DnsFilter) -> InterceptResult
 /// invalid -- they only appear in answer/authority/additional sections.
 /// Following them here would also enable a denial-of-service vector
 /// (pointer loops) so we explicitly reject them.
-fn parse_qname(dns: &[u8], mut offset: usize) -> Option<(String, usize)> {
+pub fn parse_qname(dns: &[u8], mut offset: usize) -> Option<(String, usize)> {
     let mut name = String::new();
     loop {
         if offset >= dns.len() {
@@ -311,7 +303,7 @@ fn build_dns_block_reply(query_with_question: &[u8], qtype: u16) -> Vec<u8> {
 /// The pseudo-header is the source IP, destination IP, zero, the protocol
 /// number, and the UDP length -- it is checksummed but not transmitted.
 /// This is what binds the UDP checksum to the IP layer.
-fn build_udp_segment(
+pub fn build_udp_segment(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
@@ -351,7 +343,7 @@ fn build_udp_segment(
 /// Identification is set to 0 because we never fragment our synthetic
 /// replies (they fit in a single 1500-byte MTU). TTL is fixed at 64
 /// which is the Linux default.
-fn build_ipv4_packet(
+pub fn build_ipv4_packet(
     src_ip: &[u8; 4],
     dst_ip: &[u8; 4],
     protocol: u8,
@@ -383,23 +375,17 @@ fn build_ipv4_packet(
 /// the concatenation of two byte slices.
 ///
 /// The checksum is a 1's-complement sum of 16-bit big-endian words; the
-/// final value is the bitwise NOT of that sum. This same algorithm is
-/// used for IPv4 header checksums, ICMP, UDP, and TCP -- the difference
-/// is only in *what* bytes you feed it.
-///
-/// Splitting the input into two slices is purely a convenience so callers
-/// can pass `(pseudo_header, payload)` without allocating to concatenate.
-/// An odd total length is handled by zero-padding the final byte.
-fn ones_complement_sum(a: &[u8], b: &[u8]) -> u16 {
+/// result is the one's complement of the final sum.
+pub fn ones_complement_sum(header: &[u8], data: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-    let combined_len = a.len() + b.len();
+    let combined_len = header.len() + data.len();
 
     // Walk the two slices as one logical stream of 16-bit words.
     let byte = |i: usize| -> u8 {
-        if i < a.len() {
-            a[i]
+        if i < header.len() {
+            header[i]
         } else {
-            b[i - a.len()]
+            data[i - header.len()]
         }
     };
 
@@ -417,129 +403,4 @@ fn ones_complement_sum(a: &[u8], b: &[u8]) -> u16 {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
     !(sum as u16)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dns::filter::DnsFilter;
-
-    /// Builds an outbound DNS query packet for `qname` with QTYPE=A.
-    /// Returns the full IPv4 + UDP + DNS bytes.
-    fn make_dns_query(qname: &str) -> Vec<u8> {
-        // DNS message: 12-byte header + QNAME labels + 0 terminator + qtype + qclass
-        let mut dns = Vec::new();
-        dns.extend_from_slice(&[0x12, 0x34]); // transaction id
-        dns.extend_from_slice(&[0x01, 0x00]); // flags: standard query, RD=1
-        dns.extend_from_slice(&[0x00, 0x01]); // qdcount=1
-        dns.extend_from_slice(&[0x00, 0x00]); // ancount=0
-        dns.extend_from_slice(&[0x00, 0x00]); // nscount=0
-        dns.extend_from_slice(&[0x00, 0x00]); // arcount=0
-        for label in qname.split('.') {
-            dns.push(label.len() as u8);
-            dns.extend_from_slice(label.as_bytes());
-        }
-        dns.push(0); // root label
-        dns.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
-        dns.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
-
-        let udp = build_udp_segment(
-            54321, DNS_PORT, &dns,
-            &[10, 8, 0, 2], &[1, 1, 1, 1],
-        );
-        build_ipv4_packet(&[10, 8, 0, 2], &[1, 1, 1, 1], IP_PROTOCOL_UDP, &udp)
-    }
-
-    #[test]
-    fn passes_through_non_ip_packets() {
-        let mut filter = DnsFilter::new().unwrap();
-        filter.add_blocked_domain("ads.example.com");
-        assert!(try_block_dns_query(&[0u8; 4], &filter).is_none());
-    }
-
-    #[test]
-    fn passes_through_non_udp_packets() {
-        let mut filter = DnsFilter::new().unwrap();
-        filter.add_blocked_domain("ads.example.com");
-        let mut pkt = vec![0x45u8; 28];
-        pkt[9] = 6; // TCP, not UDP
-        assert!(try_block_dns_query(&pkt, &filter).is_none());
-    }
-
-    #[test]
-    fn passes_through_non_dns_udp_packets() {
-        let mut filter = DnsFilter::new().unwrap();
-        filter.add_blocked_domain("ads.example.com");
-        // Build a UDP packet to port 80 with the same wire shape.
-        let dns_like = vec![0u8; 12];
-        let udp = build_udp_segment(
-            12345, 80, &dns_like,
-            &[10, 8, 0, 2], &[1, 1, 1, 1],
-        );
-        let pkt = build_ipv4_packet(&[10, 8, 0, 2], &[1, 1, 1, 1], IP_PROTOCOL_UDP, &udp);
-        assert!(try_block_dns_query(&pkt, &filter).is_none());
-    }
-
-    #[test]
-    fn passes_through_unblocked_dns_query() {
-        let filter = DnsFilter::new().unwrap();
-        let pkt = make_dns_query("example.com");
-        assert!(try_block_dns_query(&pkt, &filter).is_none());
-    }
-
-    #[test]
-    fn blocks_listed_domain() {
-        let mut filter = DnsFilter::new().unwrap();
-        filter.add_blocked_domain("ads.example.com");
-        let pkt = make_dns_query("ads.example.com");
-        let reply = try_block_dns_query(&pkt, &filter).expect("should block");
-
-        // The reply must be a valid IPv4 + UDP packet.
-        assert_eq!(reply[0] >> 4, 4, "IPv4 version");
-        assert_eq!(reply[9], IP_PROTOCOL_UDP, "UDP protocol");
-
-        // Source/dest IPs swapped.
-        assert_eq!(&reply[12..16], &[1, 1, 1, 1]);
-        assert_eq!(&reply[16..20], &[10, 8, 0, 2]);
-
-        // DNS payload starts at IP+UDP = 28.
-        let dns = &reply[28..];
-        // QR=1, RA=1
-        assert!(dns[2] & 0x80 != 0, "QR bit set");
-        // ANCOUNT=1
-        assert_eq!(u16::from_be_bytes([dns[6], dns[7]]), 1);
-    }
-
-    #[test]
-    fn blocks_via_parent_domain() {
-        let mut filter = DnsFilter::new().unwrap();
-        filter.add_blocked_domain("doubleclick.net");
-        let pkt = make_dns_query("ad.doubleclick.net");
-        assert!(try_block_dns_query(&pkt, &filter).is_some());
-    }
-
-    #[test]
-    fn parse_qname_handles_lowercase_normalization() {
-        let mut dns = vec![0u8; 12]; // header
-        for label in ["EXAMPLE", "COM"] {
-            dns.push(label.len() as u8);
-            dns.extend_from_slice(label.as_bytes());
-        }
-        dns.push(0);
-        let (name, _) = parse_qname(&dns, 12).unwrap();
-        assert_eq!(name, "example.com");
-    }
-
-    #[test]
-    fn parse_qname_rejects_compression_pointer() {
-        let mut dns = vec![0u8; 12];
-        dns.extend_from_slice(&[0xC0, 0x0C]); // compression pointer
-        assert!(parse_qname(&dns, 12).is_none());
-    }
-
-    #[test]
-    fn ones_complement_zero_input_is_ffff() {
-        // Sum of zero bytes is 0; one's complement of 0 is 0xFFFF.
-        assert_eq!(ones_complement_sum(&[], &[]), 0xFFFF);
-    }
 }
