@@ -56,6 +56,7 @@
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use nix::libc;
 use tokio::net::UdpSocket;
 use tokio::sync::watch;
@@ -73,6 +74,12 @@ const WIREGUARD_OVERHEAD: usize = 32;
 
 /// Keepalive interval in seconds (matches WireGuard default)
 const KEEPALIVE_INTERVAL_SECS: u64 = 25;
+
+/// Default batch size for UDP packet batching
+const DEFAULT_BATCH_SIZE: usize = 10;
+
+/// Default batch timeout in milliseconds
+const DEFAULT_BATCH_TIMEOUT_MS: u64 = 5;
 
 /// Result of running the packet loop -- tells the caller why it stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,13 +189,41 @@ pub async fn run_packet_loop(
     // UDP receive buffer
     let mut udp_buf = vec![0u8; TUN_MTU + WIREGUARD_OVERHEAD];
 
+    // Batching configuration
+    let batch_size = std::env::var("BATCH_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_BATCH_SIZE)
+        .max(1);
+    let batch_timeout = std::env::var("BATCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_BATCH_TIMEOUT_MS);
+
+    // Packet buffer for batching
+    let mut packet_buffer: Vec<Vec<u8>> = Vec::with_capacity(batch_size);
+    let mut batch_timer = tokio::time::interval(Duration::from_millis(batch_timeout));
+    batch_timer.tick().await; // Skip first immediate tick
+
     loop {
         tokio::select! {
             // --- Shutdown signal ---
             _ = stop_rx.changed() => {
                 if *stop_rx.borrow() {
+                    // Flush remaining packets before shutdown
+                    if !packet_buffer.is_empty() {
+                        flush_packet_buffer(&udp, &packet_buffer).await;
+                    }
                     info!("Packet loop received shutdown signal");
                     return PacketLoopExit::Shutdown;
+                }
+            }
+
+            // --- Batch timeout: flush buffer ---
+            _ = batch_timer.tick() => {
+                if !packet_buffer.is_empty() {
+                    flush_packet_buffer(&udp, &packet_buffer).await;
+                    packet_buffer.clear();
                 }
             }
 
@@ -227,10 +262,13 @@ pub async fn run_packet_loop(
                 match send_result {
                     Ok(0) => {} // Nothing to send (e.g., handshake pending)
                     Ok(n) => {
-                        if let Err(e) = udp.send(&encrypted[..n]).await {
-                            warn!("UDP send error: {}", e);
-                        } else {
-                            debug!("Sent {} encrypted bytes to server", n);
+                        // Add to buffer instead of sending immediately
+                        packet_buffer.push(encrypted[..n].to_vec());
+
+                        // Flush if buffer is full
+                        if packet_buffer.len() >= batch_size {
+                            flush_packet_buffer(&udp, &packet_buffer).await;
+                            packet_buffer.clear();
                         }
                     }
                     Err(e) => {
@@ -304,6 +342,21 @@ pub async fn run_packet_loop(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Flushes the packet buffer by sending all packets via UDP.
+///
+/// This function sends all encrypted packets in the buffer to the VPN server.
+/// Packets are sent individually since WireGuard requires each packet to be
+/// in its own datagram for proper decryption.
+async fn flush_packet_buffer(udp: &UdpSocket, buffer: &[Vec<u8>]) {
+    for packet in buffer {
+        if let Err(e) = udp.send(packet).await {
+            warn!("UDP batch send error: {}", e);
+        } else {
+            debug!("Sent batched {} encrypted bytes to server", packet.len());
         }
     }
 }
