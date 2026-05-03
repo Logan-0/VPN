@@ -6,192 +6,30 @@ reconnection — all cross-platform across Linux, macOS, and Windows.
 
 ---
 
-## What You Will Learn
+## Documentation
 
-- What a VPN is and why one is useful
-- How the WireGuard protocol encrypts traffic through a tunnel
-- What a TUN (virtual network) device is and how the OS uses it
-- What a kill switch does and how firewall rules enforce it
-- How DNS filtering intercepts and blocks unwanted queries
-- How Rust's module system organizes a complex application into layers
-- How cross-platform Rust code handles OS differences with `#[cfg(target_os = ...)]`
-- How configuration is serialized and saved with TOML and Serde
+Detailed documentation is available in the `docs/` folder:
+- `docs/HowItWorks.md` — Layered architecture, core components, and implementation details
+- `docs/RoadMap.md` — Project status and future work
+- `docs/ProjectSummary.md` — Feature summary and technology stack
+- `docs/ChangeLog.md` — Version history
+- `docs/ARCHITECTURE.md` — Detailed architecture documentation
+- `docs/COMPONENT_DOCUMENTATION.md` — Component-level documentation
+- `docs/DATA_FLOW_DOCUMENTATION.md` — Data flow documentation
+- `docs/NETWORKING_CONCEPTS.md` — Networking concepts explained
+- `docs/STATUS.md` — Implementation status tracking
 
----
+## Overview
 
-## What is a VPN?
+A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — cross-platform across Linux, macOS, and Windows.
 
-When you connect to the internet normally, your Internet Service Provider (ISP) can
-see every website you visit. Websites can see your real IP address. A
-**VPN** (Virtual Private Network) hides this by creating an encrypted **tunnel**
-between your computer and a server run by the VPN provider.
-
-```
-Without VPN:
-  Your Computer --> [ISP can see all traffic] --> Website
-
-With VPN:
-  Your Computer --> [encrypted tunnel] --> VPN Server --> Website
-                                           (ISP sees only
-                                           encrypted noise)
-```
-
-Websites see the VPN server's IP address, not yours. The ISP sees only encrypted
-data going to the VPN server — it cannot tell which websites you visit.
-
----
-
-## What is WireGuard?
-
-WireGuard is a modern VPN protocol designed to be:
-- **Simple**: The entire specification fits in a research paper
-- **Fast**: Less overhead than older protocols like OpenVPN or IPSec
-- **Secure**: Uses state-of-the-art cryptography (ChaCha20, Poly1305, Curve25519)
-
-WireGuard works at the **network layer** by creating a virtual network interface
-(a TUN device) that looks like a real network card to the operating system.
-
----
+For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/NETWORKING_CONCEPTS.md`.
 
 ## Architecture
 
-The application is organized as a stack of layers, each depending only on the layer
-below it:
+The application is organized as a stack of layers. For detailed architecture and module breakdown, see `docs/ARCHITECTURE.md`.
 
-```
-GUI Layer          (src/gui/)
-  User clicks Connect / Disconnect, toggles settings
-      |
-Configuration Layer   (src/config.rs, src/server.rs)
-  Loads user preferences, picks the target VPN server
-      |
-Core VPN Layer     (src/core/)
-  Manages the WireGuard tunnel, activates kill switch, handles reconnection
-      |
-Platform Layer     (src/platform/)
-  OS-specific: creates TUN device, configures routing, manages firewall rules
-      |
-Network Interface
-  Actual packets leave/enter the machine here
-```
-
-### Module Breakdown
-
-| Module | File(s) | Responsibility |
-|--------|---------|----------------|
-| Entry point | `src/main.rs` | Privilege checks, config load, update check, starts GUI |
-| Configuration | `src/config.rs` | Load/save user settings as TOML |
-| Server registry | `src/server.rs` | List of available VPN servers with metadata |
-| Core tunnel | `src/core/` | WireGuard session management, encryption loop |
-| Kill switch | `src/core/killswitch.rs` | Firewall rules that block non-VPN traffic |
-| Auto-reconnect | `src/core/reconnect.rs` | Exponential backoff reconnection logic |
-| DNS filtering | `src/dns/` | Intercepts DNS queries, checks blocklists, uses DoH |
-| GUI | `src/gui/app.rs` | Iced graphical interface -- Elm architecture (connect button, server picker, toggles) |
-| Linux platform | `src/platform/linux.rs` | `ip tuntap`, `iptables`, routing tables |
-| macOS platform | `src/platform/macos.rs` | `utun` device, `pf` firewall, routing |
-| Windows platform | `src/platform/windows.rs` | WinTun driver, Windows Firewall |
-| Updater | `src/update.rs` | Checks GitHub releases for a newer version |
-
----
-
-## Key Concepts Explained
-
-### What is a TUN Device?
-
-A **TUN** (network TUNnel) device is a virtual network interface created in software.
-To the operating system it looks identical to a physical network card, but instead of
-sending packets to hardware, it hands them to a user-space program (our Rust code).
-
-The VPN client:
-1. Creates a TUN device (e.g., `tun0` on Linux)
-2. Tells the OS to route all internet traffic through `tun0`
-3. Reads packets from `tun0`, **encrypts** them with WireGuard, and sends them to
-   the real VPN server over UDP
-4. Receives encrypted packets from the server, **decrypts** them, and writes the
-   plaintext back to `tun0` so the OS delivers them normally
-
-### What is a Kill Switch?
-
-A kill switch prevents your real IP address from being exposed if the VPN connection
-drops unexpectedly. Without one, the OS would route traffic through your normal
-network interface while the VPN reconnects — briefly leaking your identity.
-
-The kill switch works by installing **firewall rules** that block all traffic
-**except**:
-- Traffic through the VPN tunnel interface
-- UDP to the VPN server's IP (needed to re-establish the tunnel)
-- Local network traffic (192.168.x.x, 10.x.x.x, 172.16.x.x)
-- Loopback (127.0.0.1)
-
-On Linux this uses `iptables`. On macOS it uses `pf`. On Windows it uses the Windows
-Firewall API.
-
-### What is DNS Filtering?
-
-Every time you type a web address your computer makes a **DNS query** to translate
-the name (e.g., `example.com`) into an IP address. Normally these queries travel
-unencrypted, meaning your ISP can log every site you try to visit.
-
-This project intercepts DNS queries and:
-1. Checks the domain against a blocklist of known ads and malware
-2. Returns a fake "not found" response for blocked domains — the browser never
-   connects
-3. Forwards allowed queries over **DNS-over-HTTPS** (DoH) or **DNS-over-TLS** (DoT),
-   which encrypts the query so nobody on the network can read it
-
-### What is Exponential Backoff?
-
-If the VPN connection drops, retrying immediately every second would flood the server
-with connection attempts and drain the battery. **Exponential backoff** solves this by
-waiting longer between each retry:
-
-```
-Attempt 1: wait 1 second
-Attempt 2: wait 2 seconds
-Attempt 3: wait 4 seconds
-Attempt 4: wait 8 seconds
-...
-Maximum:   wait 60 seconds (then keep retrying at that interval)
-```
-
-The wait time doubles each time, so failed retries settle into a gentle polling
-rhythm without hammering the network.
-
-### What is TOML Configuration?
-
-User settings are saved to disk in **TOML** format (Tom's Obvious Minimal Language).
-It is designed to be easy for humans to read and edit:
-
-```toml
-auto_connect_on_application_startup = false
-kill_switch_protection_enabled = true
-dns_filtering_protection_enabled = true
-selected_vpn_server_identifier = "us-california-1"
-```
-
-Serde deserializes this file into the `VpnConfig` struct automatically. If the file
-does not exist, `VpnConfig::default()` returns secure defaults (kill switch on, DNS
-filtering on).
-
-### How Does Cross-Platform Rust Work?
-
-Rust uses **conditional compilation** attributes to include different code for
-different operating systems:
-
-```rust
-#[cfg(target_os = "linux")]
-fn setup_firewall() {
-    // use iptables here
-}
-
-#[cfg(target_os = "macos")]
-fn setup_firewall() {
-    // use pf here
-}
-
-#[cfg(target_os = "windows")]
-fn setup_firewall() {
-    // use Windows Firewall API here
+For detailed explanations of TUN devices, kill switches, DNS filtering, exponential backoff, TOML configuration, and cross-platform Rust, see `docs/NETWORKING_CONCEPTS.md`.
 }
 ```
 
