@@ -9,32 +9,22 @@ reconnection — all cross-platform across Linux, macOS, and Windows.
 ## Documentation
 
 Detailed documentation is available in the `docs/` folder:
-- `docs/HowItWorks.md` — Layered architecture, core components, and implementation details
+- `docs/Education.md` — Layered architecture, core components, and implementation details
 - `docs/RoadMap.md` — Project status and future work
 - `docs/ProjectSummary.md` — Feature summary and technology stack
 - `docs/ChangeLog.md` — Version history
-- `docs/ARCHITECTURE.md` — Detailed architecture documentation
-- `docs/COMPONENT_DOCUMENTATION.md` — Component-level documentation
-- `docs/DATA_FLOW_DOCUMENTATION.md` — Data flow documentation
-- `docs/NETWORKING_CONCEPTS.md` — Networking concepts explained
-- `docs/STATUS.md` — Implementation status tracking
 
 ## Overview
 
 A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — cross-platform across Linux, macOS, and Windows.
 
-For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/NETWORKING_CONCEPTS.md`.
+For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/Education.md`.
 
 ## Architecture
 
-The application is organized as a stack of layers. For detailed architecture and module breakdown, see `docs/ARCHITECTURE.md`.
+The application is organized as a stack of layers. For detailed architecture and module breakdown, see `docs/Education.md`.
 
-For detailed explanations of TUN devices, kill switches, DNS filtering, exponential backoff, TOML configuration, and cross-platform Rust, see `docs/NETWORKING_CONCEPTS.md`.
-}
-```
-
-Only the block matching the target operating system is compiled into the binary.
-The other blocks are completely ignored by the compiler.
+For detailed explanations of TUN devices, kill switches, DNS filtering, exponential backoff, TOML configuration, and cross-platform Rust, see `docs/Education.md`.
 
 ---
 

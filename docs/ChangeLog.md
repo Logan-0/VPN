@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Documentation
 - **Project documentation suite**
-  - RoadMap.md (renamed from REMAINING_WORK.md)
-  - HowItWorks.md with architecture overview
+  - RoadMap.md with consolidated status and remaining work
+  - Education.md with architecture overview
   - ProjectSummary.md with feature summary
   - ChangeLog.md with version history
 

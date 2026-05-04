@@ -8,6 +8,14 @@ is structurally complete (compiles cleanly under `cargo check
 --target x86_64-pc-windows-gnu`) but has not been exercised on a real
 Windows host.
 
+## Current Operational Snapshot
+
+- Version line: `0.1.0` series with active incremental hardening and platform work.
+- Linux status: MVP feature-complete and operationally validated.
+- Windows status: code-complete path compiles cleanly but remains operationally unverified on physical hosts.
+- macOS status: intentionally deferred and tracked as future platform work.
+- Quality baseline: automated test suite remains green and is the release gate for changes.
+
 ---
 
 ## Summary Table

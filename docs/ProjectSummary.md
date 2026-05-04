@@ -118,7 +118,7 @@ VPN/
 
 ---
 
-## Usage
+## Quick Start
 
 ### Linux (Recommended)
 
@@ -192,50 +192,13 @@ client_tun_ip_cidr = "10.8.0.2/24"  # Optional, defaults to 10.8.0.2/24
 
 ## Educational Value
 
-This project teaches:
-- **VPN technology** and how encrypted tunnels work
-- **TUN devices** and virtual network interfaces
-- **Kill switch implementation** with firewall rules
-- **DNS filtering** at the network layer
-- **Cross-platform Rust development** with conditional compilation
-- **Rust's module system** for organizing complex applications
-- **Configuration management** with TOML and Serde
-- **Privilege management** with Linux capabilities
-- **Debian packaging** for system distribution
+For architecture, traffic/data flow, security model, and networking concept walkthroughs, see `docs/Education.md`.
 
 ---
 
-## Version Information
+## Project Status and Limitations
 
-**Current Version**: Alpha (Linux operationally complete, Windows structurally complete)
-**Status**: Alpha
-**Last Updated**: May 3, 2026
-
----
-
-## Known Limitations
-
-### Current Constraints
-1. **macOS TUN device**: Explicitly skipped (stub implementation)
-2. **Windows TUN device**: Structurally complete but operationally unverified
-3. **No real server endpoints**: Uses placeholder infrastructure
-
-### Platform Status
-- **Linux**: Fully operational
-- **macOS**: Stub only (not a priority)
-- **Windows**: Code-complete, needs testing on real hardware
-
----
-
-## Project Statistics
-
-| Item | Value |
-|------|-------|
-| Total tests | 156 (0 failures) |
-| Core modules complete | 13 / 13 |
-| Platform layers | 1 fully (Linux), 1 structurally (Windows), 1 stub (macOS) |
-| `cargo build` (Linux) | Clean |
-| `cargo check --target x86_64-pc-windows-gnu` | Clean (warnings only) |
+Current implementation status, platform readiness, known limitations, and remaining work are tracked in `docs/RoadMap.md`.
 
 ---
 

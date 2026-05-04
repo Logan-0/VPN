@@ -1,4 +1,4 @@
-# How It Works - RustVPN
+# Education - RustVPN
 
 This document explains the overarching architecture and educational philosophy behind the RustVPN project.
 
@@ -294,6 +294,49 @@ OS delivers to application
 - DNS-over-HTTPS encrypts DNS queries
 - Blocklist prevents access to known bad domains
 - Interception at TUN layer ensures all DNS is filtered
+
+---
+
+## Networking Fundamentals in Context
+
+This section consolidates the core networking concepts used throughout this project.
+
+### Where RustVPN Operates in the Network Stack
+
+- Layer 3 (Network): TUN interface captures and injects IP packets.
+- Layer 4 (Transport): WireGuard traffic is sent over UDP.
+- Encryption/Auth: WireGuard uses X25519 key exchange and ChaCha20-Poly1305 with integrity checks.
+
+### Routing and Tunnel Behavior
+
+- On connect, default routes are redirected through the VPN interface.
+- VPN server endpoint traffic is explicitly excluded from tunnel recursion.
+- Local network access can be preserved through targeted firewall/routing allowances.
+
+### DNS and Leak Prevention
+
+- DNS queries are filtered against blocklists before external resolution.
+- DNS-over-HTTPS support is available for encrypted resolver communication.
+- Kill switch and routing policy work together to prevent DNS and IP leaks on disconnects.
+
+---
+
+## Connection Lifecycle
+
+### Connect Flow
+
+1. Load configuration and selected server.
+2. Enable kill switch protections.
+3. Create/configure TUN device for the platform.
+4. Initialize WireGuard tunnel and perform handshake.
+5. Start packet loop (TUN -> encrypt -> UDP, UDP -> decrypt -> TUN).
+6. Start health monitoring and reconnect supervision.
+
+### Disconnect/Recovery Flow
+
+- Unexpected drop: auto-reconnect applies exponential backoff and retries tunnel establishment.
+- User disconnect: stop packet loop, restore routes/interface state, and disable kill switch.
+- Shutdown path prioritizes cleanup so no restrictive firewall state remains unintentionally.
 
 ---
 
