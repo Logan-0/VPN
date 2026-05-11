@@ -1,11 +1,18 @@
-//! # Server Manager Unit Tests
+//! Server — Unit tests for VPN server management.
 //!
-//! Tests for server loading, lookup, and selection including:
+//! # Test Coverage
+//! Tests server loading, lookup, and selection including:
 //! - Loading servers from resources/servers.toml
 //! - Finding servers by ID
 //! - Finding servers by country
 //! - Display list generation
 //! - Best server selection
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Server list parsing from TOML
+//! - Server lookup algorithms
+//! - Server metadata integrity
 
 use rust_vpn::server::ServerManager;
 

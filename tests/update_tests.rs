@@ -1,6 +1,16 @@
-//! Update Checker Tests
+//! Update — Unit tests for version comparison and update checking.
 //!
-//! Tests for the version comparison and update checking logic.
+//! # Test Coverage
+//! Tests version comparison and update checking logic including:
+//! - Version string storage and retrieval
+//! - Semantic versioning comparison (major, minor, patch)
+//! - Newer version detection
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Version parsing and comparison algorithm
+//! - SemVer ordering rules
+//! - Update notification logic
 
 use rust_vpn::update::UpdateChecker;
 use rust_vpn::update::GITHUB_RELEASES_API_URL;

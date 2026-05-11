@@ -1,36 +1,24 @@
-//! # VPN Update Checker Module
+//! Update — GitHub release checking for application updates.
 //!
-//! This module checks for application updates from GitHub releases.
-//! It notifies users when a new version is available for download.
+//! # Role in RustVPN
+//! This module checks for application updates by querying the GitHub releases API.
+//! It compares the current version with the latest release and notifies users
+//! via VpnEvent when a new version is available.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Current version from CARGO_PKG_VERSION
+//! - Output: UpdateAvailable events to GUI if newer version found
+//! - Safety: HTTP requests use standard HTTPS; no authentication required
 //!
-/// The update checker uses HTTP to:
-/// 1. Fetch GitHub releases API
-/// 2. Parse JSON response with version information
-/// 3. Compare current version with latest release
-/// 4. Notify user if newer version is available
-///
-/// ### HTTP Requests
-///
-/// The update checker makes HTTP GET requests to:
-/// - GitHub API: `https://api.github.com/repos/owner/repo/releases/latest`
-/// 
-/// This is a standard REST API call that returns JSON data about the
-/// latest release including version number, release notes, and download URLs.
-///
-/// ### Version Comparison
-///
-/// Versions are compared using semantic versioning (SemVer):
-/// - Format: MAJOR.MINOR.PATCH (e.g., 0.1.0)
-/// - MAJOR: Incompatible API changes
-/// - MINOR: Backwards-compatible functionality
-/// - PATCH: Backwards-compatible bug fixes
-///
-/// Example comparison:
-/// - 0.1.0 < 0.2.0 (newer minor version)
-/// - 0.1.0 < 0.1.1 (newer patch version)
-/// - 1.0.0 > 0.9.9 (newer major version)
+//! # Platform Notes
+//! Platform-agnostic using HTTP client (reqwest).
+//! GitHub API endpoint must be configured before first release.
+//! Runs as background task independent of VPN operations.
+//!
+//! # Non-goals
+//! This module does not perform automatic updates (user notification only).
+//! It does not download or install update packages.
+//! It does not affect VPN tunnel operations.
 
 use anyhow::Result;
 use serde::Deserialize;

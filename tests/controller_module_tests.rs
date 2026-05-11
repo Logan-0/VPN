@@ -1,6 +1,17 @@
-//! VPN Controller Tests
+//! Controller Module — Tests for VPN controller state machine and event handling.
 //!
-//! Tests for the VPN controller state machine and event handling.
+//! # Test Coverage
+//! Tests VPN controller behavior including:
+//! - Command/event message passing
+//! - State transitions
+//! - Error handling
+//! - Event propagation
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Controller state machine logic
+//! - Channel communication
+//! - Event ordering
 
 use rust_vpn::core::controller::{VpnController, VpnCommand, VpnEvent, VpnState};
 use std::time::Duration;

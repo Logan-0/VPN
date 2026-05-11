@@ -1,12 +1,19 @@
-//! # DNS Filter Unit Tests
+//! DNS Filter — Unit tests for DNS query filtering system.
 //!
-//! Tests for the DNS query filtering system including:
+//! # Test Coverage
+//! Tests DNS query filtering including:
 //! - Default blocklist loading
 //! - Exact domain matching
 //! - Parent domain (wildcard) matching
 //! - Hosts file parsing
 //! - Pi-hole / external DNS passthrough mode
 //! - Disabled mode
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Blocklist loading and parsing
+//! - Domain matching logic (case sensitivity, subdomains)
+//! - Filter mode switching (BuiltIn, ExternalDns, Disabled)
 
 use rust_vpn::dns::filter::{DnsFilter, DnsFilterMode};
 use std::net::IpAddr;

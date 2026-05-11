@@ -1,13 +1,20 @@
-//! # Tunnel Unit Tests
+//! Tunnel — Unit tests for WireGuard tunnel module.
 //!
-//! Tests for the WireGuard tunnel module including:
-//! - Key generation
+//! # Test Coverage
+//! Tests WireGuard tunnel functionality including:
+//! - Key generation (X25519 key pairs)
 //! - Base64 encoding/decoding round-trip
 //! - Tunnel creation and initial state
 //! - State transitions
 //!
 //! Note: Actual encryption/decryption tests require a running WireGuard
 //! peer and are covered in the E2E integration tests.
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Cryptographic key generation
+//! - Key encoding/decoding
+//! - Tunnel state management
 
 use rust_vpn::core::tunnel::{
     generate_keypair, base64_to_key, key_to_base64,

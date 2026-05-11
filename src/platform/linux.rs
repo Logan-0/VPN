@@ -1,37 +1,24 @@
-//! # Linux Platform Module
+//! Linux — TUN device creation and routing configuration via ioctl/iproute2.
 //!
-//! This module handles Linux-specific networking operations including
-//! TUN device creation, routing configuration, and firewall management.
+//! # Role in RustVPN
+//! This module handles Linux-specific networking operations including TUN device
+//! creation using ioctl, routing configuration via iproute2, and network interface
+//! management. It provides the Platform trait implementation for Linux systems.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: TUN IP configuration, VPN server endpoint
+//! - Output: TUN device file descriptor, routing table changes
+//! - Safety: Requires CAP_NET_ADMIN or root; cleanup on Drop removes routes
 //!
-/// ### TUN Devices on Linux
-///
-/// Linux TUN devices are virtual network interfaces that operate at Layer 3 (Network layer).
-/// They allow user-space programs to intercept IP packets.
-///
-/// Device naming convention: tun0, tun1, tun2, etc.
-///
-/// ### Linux Networking Commands
-///
-/// **ip command (iproute2):**
-/// - Create TUN device: `ip tuntap add dev tun0 mode tun`
-/// - Assign IP: `ip addr add 10.8.0.2/24 dev tun0`
-/// - Bring up: `ip link set tun0 up`
-/// - Add route: `ip route add 0.0.0.0/0 dev tun0`
-///
-/// **iptables (firewall):**
-/// - Create chain: `iptables -N CHAIN_NAME`
-/// - Add rule: `iptables -A CHAIN_NAME -j ACCEPT`
-/// - Insert chain: `iptables -I OUTPUT 1 -j CHAIN_NAME`
-///
-/// ### Permissions
-///
-/// Creating TUN devices and modifying routing requires:
-/// - Root privileges OR
-/// - CAP_NET_ADMIN capability
-///
-/// This is because these operations affect system-wide networking.
+//! # Platform Notes
+//! Linux-specific using tun crate with ioctl-based TUN device creation.
+//! Uses iproute2 (ip command) for routing configuration.
+//! Requires CAP_NET_ADMIN capability for TUN device and routing operations.
+//!
+//! # Non-goals
+//! This module does not implement firewall rules (delegated to killswitch).
+//! It does not handle packet I/O (delegated to packet loop).
+//! It does not implement cryptographic operations (delegated to tunnel module).
 
 use anyhow::{Context, Result};
 use std::net::IpAddr;

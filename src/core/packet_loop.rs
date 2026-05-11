@@ -1,57 +1,24 @@
-//! # Packet Processing Loop
+//! Packet Loop — TUN device to UDP socket packet forwarding.
 //!
+//! # Role in RustVPN
 //! This module implements the main packet processing loop that bridges
-//! the TUN device with the UDP socket to the VPN server.
+//! the TUN device with the UDP socket to the VPN server. It handles
+//! outgoing traffic (TUN→UDP→VPN), incoming traffic (VPN→UDP→TUN),
+//! and periodic keepalive packets to prevent NAT timeouts.
 //!
-//! ## Data Flow
+//! # Main Contracts
+//! - Input: TUN device fd, UDP socket, tunnel encryption/decryption
+//! - Output: Encrypted packets to VPN server, decrypted packets to TUN
+//! - Safety: DNS filtering blocks malicious queries; errors logged per-packet
 //!
-//! ```text
-//! ┌──────────────┐        ┌────────────────┐        ┌──────────┐
-//! │  Application │        │  Packet Loop   │        │   VPN    │
-//! │   Traffic    │        │                │        │  Server  │
-//! │              │        │  TUN ──► Encrypt│        │          │
-//! │  Browser,    ├───────►│  Read   ──► UDP ├───────►│  Decrypt │
-//! │  curl, etc.  │        │  Send         │        │  Forward │
-//! │              │◄───────┤               │◄───────┤          │
-//! │              │        │  UDP ──► Decrypt│        │  Encrypt │
-//! │              │        │  Recv   ──► TUN │        │  Return  │
-//! └──────────────┘        │  Write        │        └──────────┘
-//!                         │               │
-//!                         │  Keepalive    │
-//!                         │  Timer ──► UDP │
-//!                         └────────────────┘
-//! ```
+//! # Platform Notes
+//! Linux-specific implementation using raw file descriptors and ioctl.
+//! Windows uses a separate packet_loop_windows module with WinTun sessions.
 //!
-//! ## How the Loop Works
-//!
-//! The packet loop uses `tokio::select!` to concurrently handle three events:
-//!
-//! 1. **Outgoing traffic (TUN -> UDP)**:
-//!    - A packet arrives on the TUN device (an app sent data)
-//!    - The packet is encrypted with `Tunnel::encapsulate()`
-//!    - The encrypted packet is sent over UDP to the VPN server
-//!
-//! 2. **Incoming traffic (UDP -> TUN)**:
-//!    - An encrypted packet arrives from the VPN server
-//!    - The packet is decrypted with `Tunnel::decapsulate()`
-//!    - The decrypted packet is written to the TUN device
-//!    - The OS delivers it to the destination application
-//!
-//! 3. **Keepalive timer**:
-//!    - Every 25 seconds, a keepalive packet is sent to prevent
-//!      NAT table timeouts on routers between client and server
-//!
-//! ## Buffer Sizes
-//!
-//! - TUN read buffer: 1500 bytes (standard Ethernet MTU)
-//! - Encryption overhead: up to 32 bytes (WireGuard header + auth tag)
-//! - UDP receive buffer: 1532 bytes (MTU + overhead)
-//!
-//! ## Error Handling
-//!
-//! Individual packet errors do NOT crash the loop. Errors are logged
-//! and the loop continues processing the next packet. Only a shutdown
-//! signal or fatal I/O error terminates the loop.
+//! # Non-goals
+//! This module does not implement encryption/decryption (delegated to tunnel module).
+//! It does not implement DNS filtering logic (delegated to dns filter module).
+//! It does not handle connection state management (delegated to controller).
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;

@@ -1,53 +1,25 @@
-//! # Privilege Minimization
+//! Privilege — Linux capability minimization for security hardening.
 //!
-//! This module reduces the runtime privileges of the VPN process.
+//! # Role in RustVPN
+//! This module reduces runtime privileges by dropping Linux capabilities except
+//! CAP_NET_ADMIN, which is required for TUN device creation and routing. This
+//! prevents privilege escalation bugs in other components (GUI, config parser, HTTP
+//! client) from compromising the system even if the process starts as root.
 //!
-//! ## The Problem
+//! # Main Contracts
+//! - Input: None (called once at startup)
+//! - Output: Reduced capability set (only CAP_NET_ADMIN retained)
+//! - Safety: Drops all capabilities except CAP_NET_ADMIN; no-op on non-Linux
 //!
-//! RustVPN is launched as root (or via `sudo`) so it can:
-//! - Create TUN devices (`CAP_NET_ADMIN`)
-//! - Install iptables rules for the kill switch (`CAP_NET_ADMIN`)
-//! - Modify the routing table (`CAP_NET_ADMIN`)
+//! # Platform Notes
+//! Linux-specific using Linux capabilities (caps crate).
+//! On macOS and Windows, functions are no-ops (different privilege models).
+//! Requires root/CAP_NET_ADMIN at startup to drop capabilities.
 //!
-//! Once the process is running, none of the *other* root powers are ever
-//! used. Keeping them around means a bug in the HTTP client (update check),
-//! the GUI, the config parser, or any dependency could be turned into a
-//! full root compromise. We want the smallest possible privilege footprint
-//! while still allowing the user to connect and disconnect freely.
-//!
-//! ## Why Not Just `setuid()`?
-//!
-//! The naive approach -- `setuid()` to the invoking user immediately --
-//! breaks the use case. TUN device creation, route changes, and iptables
-//! manipulation happen on **every** Connect (and Disconnect), not just at
-//! startup, because the user can reconnect to a different server at any
-//! time. After `setuid()`, the next Connect would fail with `EPERM`.
-//!
-//! ## What This Module Does Instead
-//!
-//! [`minimize_capabilities`] keeps the process's effective UID at 0 but
-//! drops every Linux capability except `CAP_NET_ADMIN`. This is the same
-//! pattern used by hardened production daemons (sshd, systemd-resolved,
-//! NetworkManager). After this call:
-//!
-//! - TUN device creation still works (needs `CAP_NET_ADMIN`)
-//! - iptables rules still work (needs `CAP_NET_ADMIN`)
-//! - `route add` / `ip route` still work (needs `CAP_NET_ADMIN`)
-//! - File ownership changes (`chown`) -- **denied**
-//! - Loading kernel modules -- **denied**
-//! - Mounting filesystems -- **denied**
-//! - Reading any user's files via `CAP_DAC_OVERRIDE` -- **denied**
-//! - Killing arbitrary processes via `CAP_KILL` -- **denied**
-//!
-//! A bug in `reqwest` that downloads a malicious payload can no longer
-//! escalate to overwriting `/etc/passwd` or installing a kernel module.
-//!
-//! ## Platform Scope
-//!
-//! Capabilities are a Linux-specific concept. On macOS and Windows this
-//! module is a no-op -- those platforms have their own (different) privilege
-//! models (entitlements, UAC, mandatory integrity levels) which we do not
-//! attempt to drop into here.
+//! # Non-goals
+//! This module does not perform privilege escalation (only drops privileges).
+//! It does not implement setuid (keeps effective UID 0 for network operations).
+//! It does not handle Windows UAC or macOS entitlements (platform-specific).
 
 use anyhow::Result;
 

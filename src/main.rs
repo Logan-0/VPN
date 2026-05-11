@@ -1,28 +1,26 @@
-//! # RustVPN Main Entry Point
+//! Main — RustVPN application entry point and initialization.
 //!
-//! This is the main entry point for the RustVPN application.
-//! It performs graceful startup checks and starts the Iced graphical user interface.
+//! # Role in RustVPN
+//! This is the main entry point for the RustVPN application. It performs
+//! graceful startup checks, privilege minimization, configuration loading,
+//! and launches the Iced graphical user interface. It sets up the runtime
+//! environment before delegating control to the GUI.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Command-line arguments (none currently)
+//! - Output: Iced GUI application window
+//! - Safety: Privilege checks, capability minimization, structured logging
 //!
-/// The main function doesn't directly handle networking, but it:
-/// - Initializes logging for network operations debugging
-/// - Checks for required privileges (root/admin)
-/// - Loads and validates configuration
-/// - Starts the GUI which controls VPN networking components
-/// - Sets up the application runtime environment
-///
-/// ## Application Startup Sequence
-///
-/// 1. Initialize tracing subscriber for structured logging
-/// 2. Check for required privileges (root/admin)
-/// 3. Load configuration from disk
-/// 4. Validate configuration values
-/// 5. Spawn background thread for update check (non-blocking)
-/// 6. Create and run Iced application (Elm architecture)
-/// 7. Build user interface
-/// 8. Wait for user interactions
-/// 9. Handle VPN connection requests from GUI
+//! # Platform Notes
+//! Cross-platform startup sequence:
+//! - Linux: Checks for CAP_NET_ADMIN, drops other capabilities
+//! - macOS: Checks for root privileges
+//! - Windows: Checks for Administrator privileges
+//!
+//! # Non-goals
+//! This module does not implement VPN operations (delegated to core modules).
+//! It does not handle networking directly (GUI controls VPN via controller).
+//! It does not parse command-line arguments (GUI-only application).
 
 use rust_vpn::config::VpnConfig;
 use rust_vpn::gui::app::VpnApp;

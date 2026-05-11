@@ -1,6 +1,17 @@
-//! DNS Interception Tests
+//! DNS Intercept — Unit tests for DNS query interception and filtering.
 //!
-//! Tests for DNS query interception and filtering.
+//! # Test Coverage
+//! Tests DNS query interception at the TUN layer including:
+//! - Packet parsing (IPv4, UDP, DNS)
+//! - Domain name extraction
+//! - Blocked domain response synthesis
+//! - Non-DNS packet passthrough
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Packet header parsing logic
+//! - DNS query extraction
+//! - Synthetic response generation
 
 use rust_vpn::dns::intercept::{try_block_dns_query, build_udp_segment, build_ipv4_packet, IP_PROTOCOL_UDP, parse_qname, ones_complement_sum};
 use rust_vpn::dns::filter::DnsFilter;

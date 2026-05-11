@@ -1,63 +1,26 @@
-//! # Windows Platform Module
+//! Windows — WinTun driver-based TUN adapter and routing via netsh.
 //!
-//! Implements the platform-layer responsibilities for Windows: creating
-//! a virtual TUN interface using the WinTun driver, configuring its IP
-//! address, and adding the routes that send all traffic into the VPN
-//! tunnel.
+//! # Role in RustVPN
+//! This module handles Windows-specific networking operations including WinTun
+//! adapter creation, IP configuration, and routing table management via netsh.
+//! It uses the WinTun kernel driver (signed by WireGuard authors) for Layer-3
+//! virtual adapter functionality.
 //!
-//! ## Why WinTun?
+//! # Main Contracts
+//! - Input: TUN IP configuration, VPN server endpoint
+//! - Output: WinTun session handle, routing table changes
+//! - Safety: Requires Administrator privileges; cleanup on Drop removes routes
 //!
-//! Windows has no in-kernel TUN device analogous to Linux's
-//! `/dev/net/tun`. The de facto standard for user-space VPNs on Windows
-//! is the **WinTun** driver, written by the WireGuard authors. It is a
-//! signed kernel driver that exposes a Layer-3 virtual adapter and a
-//! ring-buffer API to user space. The official WireGuard Windows client
-//! uses it; so do most third-party WireGuard clients.
+//! # Platform Notes
+//! Windows-specific using WinTun driver with ring-buffer API (no file descriptors).
+//! Uses netsh for routing configuration and adapter management.
+//! Requires Administrator privileges for adapter creation and routing.
+//! Bundles wintun.dll dynamically from executable directory or PATH.
 //!
-//! WinTun is loaded dynamically from `wintun.dll`, which must be:
-//!   1. Bundled alongside the RustVPN executable, OR
-//!   2. Installed on the user's `PATH`.
-//!
-//! Distribute `wintun.dll` (the official one from <https://www.wintun.net/>)
-//! with release builds.
-//!
-//! ## API Shape (vs. Linux)
-//!
-//! The Linux platform layer exposes a `tun::Device` whose raw file
-//! descriptor is read/written by the packet loop. WinTun does not have
-//! a file descriptor; instead it exposes a `Session` object with
-//! `send_packet` / `receive_blocking` methods. Because of this, the
-//! controller and packet loop guard their fd-based code paths with
-//! `#[cfg(target_os = "linux")]` and the Windows-specific code paths
-//! use the `Session` directly.
-//!
-//! ## Privilege Requirements
-//!
-//! Creating a WinTun adapter requires Administrator privileges, just as
-//! creating a TUN device on Linux requires root or `CAP_NET_ADMIN`. This
-//! is not enforced here; the user must launch the application elevated.
-//!
-//! ## Routing
-//!
-//! After bringing up the adapter, the routing table needs three changes
-//! so VPN traffic flows correctly:
-//!
-//!   1. **Server bypass route** -- a host route to the VPN server's IP
-//!      via the original default gateway. Without this, encrypted
-//!      packets headed for the server would themselves try to go through
-//!      the tunnel, creating a loop.
-//!   2. **Two half-default routes** through the TUN adapter
-//!      (`0.0.0.0/1` and `128.0.0.0/1`). Together these cover all IPv4
-//!      traffic without conflicting with the existing `0.0.0.0/0` route,
-//!      mirroring the Linux convention.
-//!   3. **DNS resolver** routed through the tunnel so DNS queries do
-//!      not leak (handled by the platform's normal "use the adapter's
-//!      DNS" flag set via `netsh`).
-//!
-//! Routes are added via `netsh.exe`, which is present on every Windows
-//! installation and avoids pulling in the additional `IpHelper` API
-//! surface. The trade-off is that we shell out to a child process, but
-//! the cost is paid once per Connect/Disconnect.
+//! # Non-goals
+//! This module does not implement firewall rules (delegated to killswitch).
+//! It does not handle packet I/O directly (uses WinTun session API).
+//! It does not implement cryptographic operations (delegated to tunnel module).
 
 #![cfg(target_os = "windows")]
 

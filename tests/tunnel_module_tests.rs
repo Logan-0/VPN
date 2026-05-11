@@ -1,6 +1,17 @@
-//! Tunnel Module Tests
+//! Tunnel Module — Tests for WireGuard tunnel configuration and key management.
 //!
-//! Tests for WireGuard tunnel configuration and key management.
+//! # Test Coverage
+//! Tests WireGuard tunnel functionality including:
+//! - Key generation and validation
+//! - Base64 encoding/decoding
+//! - Tunnel configuration
+//! - State management
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Cryptographic key handling
+//! - Configuration validation
+//! - State transitions
 
 use rust_vpn::core::tunnel::{Tunnel, TunnelConfig, TunnelState};
 use rust_vpn::core::tunnel::generate_keypair;

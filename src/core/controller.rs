@@ -1,69 +1,25 @@
-//! # VPN Controller
+//! Controller — VPN control plane bridging GUI and async core.
 //!
+//! # Role in RustVPN
 //! This module provides the bridge between the Iced GUI (main thread) and
 //! the async VPN core (Tokio runtime). It uses message passing to safely
-//! communicate between the two worlds.
+//! communicate between the two worlds via VpnCommand (GUI→core) and VpnEvent (core→GUI).
 //!
-//! ## Architecture
+//! # Main Contracts
+//! - Input: VpnCommand messages from GUI (Connect, Disconnect, settings changes)
+//! - Output: VpnEvent messages to GUI (state changes, errors, info)
+//! - Safety: Thread-safe channel communication; zeroized private keys in memory
 //!
-//! ```text
-//! ┌──────────────────┐     VpnCommand      ┌──────────────────┐
-//! │   Iced GUI       │ ──────────────────►  │  Tokio Runtime   │
-//! │   (main thread)  │                      │  (async worker)  │
-//! │                  │     VpnEvent         │                  │
-//! │   Status Text    │ ◄──────────────────  │  Tunnel          │
-//! │   Connect Btn    │                      │  KillSwitch      │
-//! │   Settings       │                      │  PacketLoop      │
-//! └──────────────────┘                      └──────────────────┘
-//! ```
+//! # Platform Notes
+//! Platform-specific TUN device handling via conditional compilation:
+//! - Linux: Uses raw fd with ioctl-based TUN device
+//! - Windows: Uses WinTun session handles
+//! - macOS: Not yet implemented
 //!
-//! ## Thread Safety
-//!
-//! - **VpnCommand**: Sent from the GUI thread to the Tokio task via `mpsc`
-//! - **VpnEvent**: Sent from the Tokio task back to the GUI via `mpsc`;
-//!   the Iced subscription polls the receiving end.
-//! - Neither side blocks the other
-//!
-//! ## Usage
-//!
-//! 1. Create a `VpnController` (spawns the Tokio runtime in a background thread)
-//! 2. Call `send_command()` from the Iced `update()` function
-//! 3. The GUI polls events via `Message::Tick` every 100 ms by calling
-//!    `try_recv()` on the `Arc<Mutex<Receiver>>` stored in `VpnApp`
-//!
-//! ## Kill Switch integration
-//!
-//! The worker owns a `KillSwitch` and three pieces of state that work together:
-//! - `kill_switch_enabled`: the user's preference (from the GUI checkbox)
-//! - `last_server_ip`: the IP parsed from the most recent `Connect` command
-//! - `kill_switch`: the actual firewall manager
-//!
-//! The firewall must allow UDP traffic TO the server IP so reconnect packets
-//! can get through. That IP is only known once `Connect` arrives, which is
-//! why `enable()` is called inside `Connect` rather than inside `SetKillSwitch`.
-//!
-//! ## Auto-Reconnect integration
-//!
-//! The worker owns a `ReconnectManager` (from [`crate::core::reconnect`]) for
-//! exponential backoff (1 s → 2 s → 4 s → … → 30 s cap):
-//!
-//! - `auto_reconnect_enabled`: mirrors the GUI checkbox
-//! - `reconnect_manager`: accumulates failure counts and backoff timing
-//!
-//! Call sites:
-//! - `record_success()` -- after the WireGuard handshake completes
-//! - `record_failure()` -- when a connect attempt errors out
-//! - `reset()` -- on user-initiated Disconnect or when the setting is disabled
-//!
-//! Automatic re-trigger (re-issuing `Connect` when the packet loop exits
-//! unexpectedly) requires the command sender inside the spawned task;
-//! that refactor is marked as TODO in the Connect handler's spawn block.
-//!
-//! ## Private key bootstrapping
-//!
-//! On first run the worker calls [`VpnConfig::get_or_create_private_key`] to
-//! generate and persist an X25519 private key. On all subsequent runs the
-//! same key is loaded, giving the server a stable client identity.
+//! # Non-goals
+//! This module does not implement packet processing (delegated to packet_loop).
+//! It does not implement firewall rules (delegated to killswitch module).
+//! It does not perform cryptographic operations (delegated to tunnel module).
 
 use std::sync::{mpsc, Arc, Mutex};
 

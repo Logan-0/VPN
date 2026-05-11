@@ -1,37 +1,26 @@
-//! # VPN Configuration Module
+//! Config — VPN configuration management and persistence.
 //!
+//! # Role in RustVPN
 //! This module manages user preferences and application settings for the VPN client.
 //! It handles loading and saving configuration to disk in a platform-specific manner.
+//! Configuration values control VPN behavior including auto-connect, kill switch,
+//! auto-reconnect, DNS filtering, and server selection.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Configuration values from user preferences or defaults
+//! - Output: Serialized TOML configuration files and in-memory config structs
+//! - Safety: Private keys stored with 0600 permissions, zeroized in memory
 //!
-//! Configuration doesn't directly handle networking, but it stores critical settings
-//! that affect network behavior:
+//! # Platform Notes
+//! Configuration paths vary by platform:
+//! - Linux: `~/.config/rustvpn/config.toml`
+//! - macOS: `~/Library/Application Support/RustVPN/config.toml`
+//! - Windows: `%APPDATA%\RustVPN\config.toml`
 //!
-//! - **Auto-connect**: Automatically establish VPN tunnel on application startup
-//! - **Kill switch**: Block all non-VPN traffic when disconnected (prevents IP leaks)
-//! - **Auto-reconnect**: Automatically restore the tunnel if the connection drops
-//! - **DNS filtering**: Intercept and filter DNS queries to block ads/malware
-//! - **Selected server**: Which VPN server to connect to (affects latency and jurisdiction)
-//!
-//! ## Configuration Storage Locations
-//!
-//! Different operating systems have standard locations for application configuration:
-//!
-//! - **Linux**: `~/.config/rustvpn/config.toml`
-//! - **macOS**: `~/Library/Application Support/RustVPN/config.toml`
-//! - **Windows**: `%APPDATA%\RustVPN\config.toml`
-//!
-//! ## Security Considerations
-//!
-//! Configuration files may contain sensitive information:
-//! - User preferences (privacy-related settings)
-//! - Last selected server (usage patterns)
-//! - Future: API keys, credentials
-//!
-//! Files should be protected with appropriate permissions:
-//! - Read/write for owner only
-//! - No access for group or others
+//! # Non-goals
+//! This module does not perform network operations directly.
+//! It does not validate server availability or endpoint reachability.
+//! It does not implement cryptographic key generation (uses boringtun).
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};

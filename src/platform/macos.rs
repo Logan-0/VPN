@@ -1,35 +1,24 @@
-//! # macOS Platform Module
+//! macOS — UTUN device creation and routing configuration via ifconfig/route.
 //!
-//! This module handles macOS-specific networking operations including
-//! utun device creation, routing configuration, and firewall management.
+//! # Role in RustVPN
+//! This module handles macOS-specific networking operations including utun device
+//! creation, routing configuration via ifconfig/route, and firewall management
+//! using pf (packet filter). It provides the Platform trait implementation for macOS.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: TUN IP configuration, VPN server endpoint
+//! - Output: UTUN device handle, routing table changes
+//! - Safety: Requires root privileges; cleanup on Drop removes routes
 //!
-/// ### UTUN Devices on macOS
-///
-/// macOS uses utun devices as virtual network interfaces. These are
-/// similar to Linux TUN devices but with different naming and configuration.
-///
-/// Device naming convention: utun0, utun1, utun2, etc.
-///
-/// ### macOS Networking Commands
-///
-/// **ifconfig:**
-/// - Assign IP: `ifconfig utun0 10.8.0.2 10.8.0.1 up`
-/// - Set MTU: `ifconfig utun0 mtu 1420`
-///
-/// **route:**
-/// - Add route: `route add -net 0.0.0.0/0 10.8.0.1`
-/// - Delete route: `route delete -net 0.0.0.0/0`
-///
-/// **pf (packet filter):**
-/// - Load rules: `pfctl -f /etc/pf.anchors/rustvpn`
-/// - Enable pf: `pfctl -e`
-/// - Disable pf: `pfctl -d`
-///
-/// ### Permissions
-///
-/// Creating utun devices and modifying routing requires root privileges.
+//! # Platform Notes
+//! macOS-specific using utun devices with ifconfig for IP configuration.
+//! Uses route command for routing table management.
+//! Requires root privileges (no fine-grained capabilities like Linux).
+//!
+//! # Non-goals
+//! This module does not implement firewall rules (delegated to killswitch).
+//! It does not handle packet I/O (delegated to packet loop).
+//! It does not implement cryptographic operations (delegated to tunnel module).
 
 use anyhow::Result;
 

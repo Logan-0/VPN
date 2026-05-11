@@ -1,41 +1,24 @@
-//! # VPN Server Management Module
+//! Server — VPN server information and selection management.
 //!
+//! # Role in RustVPN
 //! This module manages VPN server information, selection, and configuration.
 //! It stores server details such as location, endpoint, and cryptographic keys.
+//! Server selection affects latency, jurisdiction, and connection quality.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Server configuration from TOML files
+//! - Output: Server list for GUI and connection details for tunnel establishment
+//! - Safety: Public keys are validated; endpoints are trusted from config
 //!
-/// VPN Server Selection
-///
-/// VPN servers are located around the world in different geographic regions.
-/// Server selection affects:
-///
-/// - **Latency**: Closer servers have lower latency (faster response times)
-/// - **Jurisdiction**: Different countries have different privacy laws
-/// - **Performance**: Server load affects connection quality
-/// - **Content Access**: Some content is geo-restricted to certain regions
-///
-/// Server Information Required
-///
-/// Each VPN server needs:
-///
-/// 1. **Endpoint**: IP address and UDP port where WireGuard listens
-///    - Example: "203.0.113.1:51820"
-///    - This is where encrypted packets are sent
-///
-/// 2. **Public Key**: Server's X25519 public key for authentication
-///    - Used in Noise Protocol handshake
-///    - Verifies server identity
-///    - Establishes shared secret
-///
-/// 3. **Location**: Geographic information for display
-///    - Country: e.g., "US", "SE"
-///    - State: e.g., "California"
-///    - City: e.g., "Los Angeles"
-///
-/// 4. **Load**: Current server load percentage (future implementation)
-///    - Helps select least busy server
-///    - Affects connection quality
+//! # Platform Notes
+//! Server configuration paths vary by platform:
+//! - Linux/macOS: `/etc/rustvpn/servers.toml` or `resources/servers.toml`
+//! - Windows: `C:\\ProgramData\\RustVPN\\servers.toml` or `resources\\servers.toml`
+//!
+//! # Non-goals
+//! This module does not perform server health checks or latency measurements.
+//! It does not implement server load balancing (currently returns first server).
+//! It does not validate server availability before connection.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,17 @@
-//! VPN Configuration Tests
+//! Configuration Module — Tests for VPN configuration and private key handling.
 //!
-//! Tests for VPN configuration management and private key handling.
+//! # Test Coverage
+//! Tests VPN configuration management including:
+//! - Private key storage and retrieval
+//! - Base64 encoding/decoding of keys
+//! - Default configuration values
+//! - Configuration validation
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Private key zeroization
+//! - Configuration serialization
+//! - Key validation logic
 
 use rust_vpn::config::VpnConfig;
 use base64::{engine::general_purpose::STANDARD, Engine as _};

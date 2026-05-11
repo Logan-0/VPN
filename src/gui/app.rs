@@ -1,46 +1,24 @@
-//! # VPN GUI Application (Iced)
+//! App — Main VPN application state and Iced UI rendering.
 //!
-//! This module provides a cross-platform graphical user interface using the
-//! **Iced** framework. Iced follows the **Elm architecture** (Model-View-Update),
-//! which cleanly separates application state, user interaction messages, and
-//! rendering logic. This is a significant improvement over the previous GTK4
-//! implementation because:
+//! # Role in RustVPN
+//! This module implements the main VPN application using Iced's Elm architecture.
+//! It manages application state (connection status, settings, server selection),
+//! handles user interactions via the Message enum, and renders the UI widgets.
+//! All VPN operations are delegated to the VpnController running in a background thread.
 //!
-//! - **Cross-platform by default**: Iced compiles natively on Linux, macOS, and
-//!   Windows without requiring system-level GUI libraries (no GTK, no Cocoa).
-//! - **Pure Rust**: No C bindings or FFI -- the entire rendering pipeline is Rust.
-//! - **Elm architecture**: State mutations happen in one place (`update()`), making
-//!   the application easier to reason about, test, and debug.
+//! # Main Contracts
+//! - Input: User actions (connect, disconnect, settings changes)
+//! - Output: VpnCommand messages to controller, GUI state updates
+//! - Safety: No direct network operations; all VPN work delegated to core
 //!
-//! ## Elm Architecture (Model-View-Update)
+//! # Platform Notes
+//! Cross-platform using Iced framework (Linux, macOS, Windows).
+//! Elm architecture ensures state mutations only occur in update() function.
 //!
-//! ```text
-//!   State (VpnApp)          Message (Message enum)        View (view fn)
-//!  ┌──────────────┐        ┌──────────────────┐        ┌──────────────┐
-//!  │ connection   │◄───────│ ConnectPressed   │◄───────│ [CONNECT]    │
-//!  │ kill_switch  │  update│ ServerSelected   │  event │ [dropdown]   │
-//!  │ servers[]    │────────│ KillSwitchToggled│────────│ [x] kill sw  │
-//!  └──────────────┘        └──────────────────┘        └──────────────┘
-//! ```
-//!
-//! 1. **State** (`VpnApp`): holds all live data (connection state, settings, servers).
-//! 2. **Message** (`Message`): an enum of every possible user action.
-//! 3. **update()**: receives a `Message` and mutates `State`. This is the *only*
-//!    place state changes.
-//! 4. **view()**: reads `State` and returns a widget tree. Iced re-renders
-//!    automatically whenever `update()` returns.
-//!
-//! ## Networking Context
-//!
-//! The GUI itself does not perform networking. It:
-//! - Displays VPN connection state (Connected / Disconnected / Connecting)
-//! - Shows the selected server's display name and IP address
-//! - Sends commands to the async VPN core via [`VpnController`]
-//! - Receives events from the core via [`iced::Subscription`]
-//!
-//! User preferences are loaded from [`VpnConfig`] on startup and persisted on
-//! every change. The server list comes from [`ServerManager`] /
-//! `resources/servers.toml`.
+//! # Non-goals
+//! This module does not perform VPN operations (delegated to controller).
+//! It does not implement networking (delegated to core modules).
+//! It does not manage system-level resources (delegated to platform module).
 
 use iced::widget::{button, checkbox, column, container, pick_list, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};

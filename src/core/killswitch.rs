@@ -1,105 +1,26 @@
-//! # Kill Switch Module
+//! Kill Switch — Network traffic blocking to prevent IP leaks.
 //!
+//! # Role in RustVPN
 //! This module implements a network kill switch that blocks all non-VPN traffic
-//! when the VPN is disconnected or fails.
+//! when the VPN is disconnected or fails. It prevents IP address exposure and
+//! DNS leaks by using platform-specific firewall rules to block traffic unless
+//! it flows through the VPN tunnel interface.
 //!
-//! ## Why a Kill Switch is Critical
+//! # Main Contracts
+//! - Input: VPN server IP and interface name for firewall rules
+//! - Output: Firewall rule installation/removal
+//! - Safety: Requires root/admin privileges; cleanup on Drop prevents rule leakage
 //!
-//! Without a kill switch, if your VPN connection drops:
-//! - Your real IP address is exposed
-//! - Traffic goes unencrypted over your ISP
-//! - DNS queries leak to your ISP
-//! - You might not notice the connection dropped
+//! # Platform Notes
+//! Platform-specific firewall implementations:
+//! - Linux: Uses iptables with custom chain RUSTVPN_OUT
+//! - macOS: Uses pf (packet filter) with rules file
+//! - Windows: Uses netsh to configure Windows Firewall
 //!
-//! The kill switch prevents this by:
-//! - Blocking ALL traffic when VPN is disconnected
-//! - Only allowing traffic through the VPN tunnel
-//! - Preventing DNS and IPv6 leaks
-//! - Automatically re-enabling when VPN reconnects
-//!
-//! ## How It Works
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                    Normal Operation                         │
-//! │                                                             │
-//! │  App Traffic ──► VPN Tunnel ──► Encrypted ──► Internet     │
-//! │                                                             │
-//! └─────────────────────────────────────────────────────────────┘
-//!
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │              VPN Disconnected (Kill Switch ON)              │
-//! │                                                             │
-//! │  App Traffic ──► Firewall ──► BLOCKED                  │
-//! │                                                             │
-//! │  Only Allowed:                                              │
-//! │  - VPN reconnection attempts                                │
-//! │  - Local network (192.168.x.x, 10.x.x.x)                   │
-//! │                                                             │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
-//!
-//! ## Platform-Specific Implementation
-//!
-//! ### Linux (iptables/nftables)
-//! ```bash
-//! # Block all outgoing traffic
-//! iptables -P OUTPUT DROP
-//!
-//! # Allow VPN interface
-//! iptables -A OUTPUT -o wg0 -j ACCEPT
-//!
-//! # Allow local network
-//! iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
-//! iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
-//!
-//! # Allow loopback
-//! iptables -A OUTPUT -o lo -j ACCEPT
-//!
-//! # Allow VPN server connection
-//! iptables -A OUTPUT -d <vpn_server_ip> -p udp --dport 51820 -j ACCEPT
-//! ```
-//!
-//! ### macOS (pf - Packet Filter)
-//! ```text
-//! # Block all traffic except VPN
-//! block drop all
-//! pass on utun0
-//! pass on lo0
-//! pass to <vpn_server_ip> port 51820 proto udp
-//! ```
-//!
-//! ### Windows (Windows Filtering Platform)
-//! Uses WFP API to create filters that:
-//! - Block all outbound traffic by default
-//! - Allow VPN interface
-//! - Allow VPN server connection
-//!
-//! ## Leak Prevention
-//!
-//! The kill switch prevents several types of leaks:
-//!
-//! 1. **IP Leak**: Your real IP is never exposed
-//! 2. **DNS Leak**: DNS queries can't bypass the VPN
-//! 3. **IPv6 Leak**: IPv6 traffic is blocked or routed through VPN
-//! 4. **WebRTC Leak**: Local IP discovery is blocked
-//!
-//! ## Example Usage
-//!
-//! ```rust,ignore
-//! // Enable kill switch before connecting
-//! let mut killswitch = KillSwitch::new()?;
-//! killswitch.enable("10.8.0.1".parse()?, "wg0")?;
-//!
-//! // Connect VPN
-//! tunnel.connect().await?;
-//!
-//! // If VPN disconnects, traffic is blocked automatically
-//! // ...
-//!
-//! // Disable kill switch when user disconnects
-//! killswitch.disable()?;
-//! ```
+//! # Non-goals
+//! This module does not implement packet filtering (delegated to DNS filter module).
+//! It does not monitor connection health (delegated to reconnect module).
+//! It does not handle IPv6 routing beyond basic blocking.
 
 use anyhow::{Context, Result};
 use std::net::IpAddr;

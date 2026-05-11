@@ -1,11 +1,18 @@
-//! # Reconnect Manager Unit Tests
+//! Reconnect — Unit tests for exponential backoff reconnection logic.
 //!
-//! Tests for the exponential backoff reconnection logic including:
-//! - Initial state
-//! - Backoff progression
-//! - Maximum backoff cap
-//! - Success resets
-//! - Failure counting
+//! # Test Coverage
+//! Tests automatic reconnection behavior including:
+//! - Initial state (1s backoff, 0 failures)
+//! - Exponential backoff progression (1s → 2s → 4s → 8s → 16s)
+//! - Maximum backoff cap (30 seconds)
+//! - Success resets backoff to initial state
+//! - Failure counting and reset behavior
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Backoff calculation algorithm
+//! - Maximum cap enforcement
+//! - State reset on success or manual disconnect
 
 use rust_vpn::core::reconnect::ReconnectManager;
 use std::time::Duration;

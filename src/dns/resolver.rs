@@ -1,54 +1,24 @@
-//! # DNS Resolver Module
+//! Resolver — DNS-over-HTTPS encrypted DNS resolution.
 //!
+//! # Role in RustVPN
 //! This module handles DNS resolution using DNS-over-HTTPS (DoH) and
 //! DNS-over-TLS (DoT) to encrypt DNS queries and prevent DNS leaks.
+//! It routes DNS queries through privacy-focused resolvers like Cloudflare
+//! to ensure ISPs cannot monitor which websites users visit.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Domain names for resolution, resolver configuration
+//! - Output: IP addresses via encrypted DoH/DoT protocols
+//! - Safety: All DNS queries encrypted; prevents ISP DNS surveillance
 //!
-/// ### DNS Resolution
-///
-/// DNS resolution translates human-readable domain names to IP addresses:
-/// ```text
-/// example.com ──► DNS Query ──► 93.184.216.34
-/// ```
-///
-/// ### DNS Leak Problem
-///
-/// Without DNS protection, DNS queries might bypass the VPN:
-/// ```text
-/// Your Device
-///     │
-///     ├─► DNS Query ──► ISP DNS Server (LEAK!)
-///     │                   Can see which websites you visit
-///     │
-///     └─► VPN Tunnel ──► VPN DNS Server (Protected)
-/// ```
-///
-/// ### DNS-over-HTTPS (DoH)
-///
-/// Encrypts DNS queries using HTTPS:
-/// ```text
-/// Normal DNS:
-/// Your Device ──► Clear text DNS query ──► DNS Server
-/// (Anyone can see what you're querying)
-///
-/// DNS-over-HTTPS:
-/// Your Device ──► Encrypted HTTPS ──► DNS Server
-/// (ISP cannot see DNS queries)
-/// ```
-///
-/// ### DNS-over-TLS (DoT)
-///
-/// Similar to DoH but uses dedicated TLS port (853) instead of HTTPS.
-/// Both provide encryption for DNS queries.
-///
-/// ### Privacy-Focused DNS Resolvers
-///
-/// Common DoH/DoT providers:
-/// - Cloudflare: 1.1.1.1 (no logging, privacy-focused)
-/// - Google: 8.8.8.8 (some logging, fast)
-/// - Quad9: 9.9.9.9 (security-focused)
-/// - OpenDNS: 208.67.222.222 (content filtering)
+//! # Platform Notes
+//! Platform-agnostic using hickory-resolver with tokio async runtime.
+//! Supports custom DNS servers (Pi-hole) via standard UDP/TLS protocols.
+//!
+//! # Non-goals
+//! This module does not implement DNS caching (handled by hickory-resolver).
+//! It does not perform DNS filtering (delegated to filter module).
+//! It does not handle DNS packet parsing (delegated to intercept module).
 
 use anyhow::{Context, Result};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts, NameServerConfig, Protocol};

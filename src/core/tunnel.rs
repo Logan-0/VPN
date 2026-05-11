@@ -1,92 +1,23 @@
-//! # WireGuard Tunnel Module
+//! Tunnel — WireGuard VPN encryption and decryption using boringtun.
 //!
-//! This module implements the core VPN tunnel functionality using the WireGuard protocol.
+//! # Role in RustVPN
+//! This module implements the core VPN tunnel functionality using the WireGuard protocol
+//! via the boringtun library. It handles Noise protocol handshake, packet encryption
+//! (encapsulation), packet decryption (decapsulation), and session key management.
 //!
-//! ## How VPNs Work - Data Flow Overview
+//! # Main Contracts
+//! - Input: Private key, server public key, server endpoint, allowed IPs
+//! - Output: Encrypted packets for UDP transmission, decrypted packets for TUN
+//! - Safety: Uses zeroized private keys; ChaCha20-Poly1305 authenticated encryption
 //!
-//! ```text
-//! ┌─────────────┐                                      ┌─────────────┐
-//! │   Your App  │                                      │   Website   │
-//! │ (Browser)   │                                      │   Server    │
-//! └──────┬──────┘                                      └──────▲──────┘
-//!        │                                                    │
-//!        │ 1. Plain HTTP/HTTPS request                       │
-//!        ▼                                                    │
-//! ┌─────────────────────────────────────────────────────┐    │
-//! │           TUN Virtual Network Interface             │    │
-//! │  (Intercepts all outgoing traffic from your apps)   │    │
-//! └──────┬──────────────────────────────────────────────┘    │
-//!        │                                                    │
-//!        │ 2. Packet captured by TUN device                  │
-//!        ▼                                                    │
-//! ┌─────────────────────────────────────────────────────┐    │
-//! │              WireGuard Encapsulation                │    │
-//! │  - Encrypts packet with ChaCha20-Poly1305          │    │
-//! │  - Adds WireGuard header                            │    │
-//! │  - Uses your private key + server's public key      │    │
-//! └──────┬──────────────────────────────────────────────┘    │
-//!        │                                                    │
-//!        │ 3. Encrypted WireGuard packet                     │
-//!        ▼                                                    │
-//! ┌─────────────────────────────────────────────────────┐    │
-//! │              UDP Socket (Port 51820)                │    │
-//! │  Sends encrypted packet over internet               │    │
-//! └──────┬──────────────────────────────────────────────┘    │
-//!        │                                                    │
-//!        │ 4. Encrypted packet travels over internet         │
-//!        ▼                                                    │
-//! ┌─────────────────────────────────────────────────────┐    │
-//! │              VPN Server (WireGuard)                 │    │
-//! │  - Receives encrypted packet                        │    │
-//! │  - Decrypts using server private key                │    │
-//! │  - Extracts original packet                         │    │
-//! └──────┬──────────────────────────────────────────────┘    │
-//!        │                                                    │
-//!        │ 5. Decrypted packet forwarded to destination      │
-//!        └────────────────────────────────────────────────────┘
-//!                                                             │
-//!        ┌────────────────────────────────────────────────────┘
-//!        │ 6. Response comes back (reverse flow)
-//!        ▼
-//! ```
+//! # Platform Notes
+//! Platform-agnostic cryptographic operations using boringtun's Rust implementation.
+//! Does not depend on platform-specific TUN device handling.
 //!
-//! ## WireGuard Protocol Specifics
-//!
-//! WireGuard uses:
-//! - **Curve25519** for key exchange (X25519)
-//! - **ChaCha20** for symmetric encryption
-//! - **Poly1305** for authentication
-//! - **BLAKE2s** for hashing
-//! - **UDP** as transport protocol
-//!
-//! ### Key Exchange (Noise Protocol Framework)
-//! 1. Client has: Private key (secret), Public key (derived from private)
-//! 2. Server has: Private key (secret), Public key (shared with clients)
-//! 3. Handshake establishes shared secret for session encryption
-//! 4. Keys are rotated periodically for forward secrecy
-//!
-//! ### Packet Structure
-//! ```text
-//! ┌──────────────────────────────────────────────────┐
-//! │  WireGuard Header (16 bytes)                     │
-//! │  - Message type (4 bytes)                        │
-//! │  - Receiver index (4 bytes)                      │
-//! │  - Counter (8 bytes)                             │
-//! ├──────────────────────────────────────────────────┤
-//! │  Encrypted Payload                               │
-//! │  - Original IP packet (encrypted)                │
-//! │  - Authentication tag (16 bytes)                 │
-//! └──────────────────────────────────────────────────┘
-//! ```
-//!
-//! ## This Module's Role
-//!
-//! The `Tunnel` struct manages:
-//! - Creating WireGuard tunnel instances
-//! - Encrypting outgoing packets (encapsulation)
-//! - Decrypting incoming packets (decapsulation)
-//! - Managing connection state
-//! - Handling keepalive messages
+//! # Non-goals
+//! This module does not handle packet I/O (delegated to packet loop).
+//! It does not implement TUN device creation (delegated to platform module).
+//! It does not manage connection lifecycle (delegated to controller).
 //!
 //! ## Example Usage (Future Integration)
 //!

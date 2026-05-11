@@ -1,71 +1,23 @@
-//! # Auto-Reconnect Manager
+//! Reconnect — Automatic VPN reconnection with exponential backoff.
 //!
+//! # Role in RustVPN
 //! This module handles automatic reconnection when the VPN connection is lost.
+//! It implements exponential backoff to avoid hammering the server with constant
+//! retry attempts, and provides a health check loop to detect zombie connections.
 //!
-//! ## Why Auto-Reconnect is Important
+//! # Main Contracts
+//! - Input: Connection success/failure events from packet loop
+//! - Output: Reconnect timing and health check status
+//! - Safety: Backoff capped at 30 seconds to prevent excessive retry attempts
 //!
-//! VPN connections can drop for many reasons:
-//! - Network changes (WiFi to cellular, different WiFi network)
-//! - Server maintenance or restarts
-//! - Temporary internet outages
-//! - NAT timeout on routers
-//! - Firewall interference
+//! # Platform Notes
+//! Platform-agnostic logic; health checks work on all platforms.
+//! Reconnection timing uses tokio::time for async sleep operations.
 //!
-//! Without auto-reconnect, users would have to manually reconnect every time,
-//! which is inconvenient and leaves gaps where traffic isn't protected.
-//!
-//! ## Exponential Backoff Strategy
-//!
-//! When reconnection fails, we don't want to hammer the server with constant
-//! retry attempts. Instead, we use exponential backoff:
-//!
-//! ```text
-//! Attempt 1: Wait 1 second   (INITIAL_BACKOFF)
-//! Attempt 2: Wait 2 seconds  (1s × 2)
-//! Attempt 3: Wait 4 seconds  (2s × 2)
-//! Attempt 4: Wait 8 seconds  (4s × 2)
-//! Attempt 5: Wait 16 seconds (8s × 2)
-//! Attempt 6: Wait 30 seconds (16s × 2, capped at MAX_BACKOFF)
-//! Attempt 7+: Wait 30 seconds (stays at MAX_BACKOFF)
-//! ```
-//!
-//! This approach:
-//! - Quickly recovers from brief outages (1-2 second retry)
-//! - Reduces server load during extended outages
-//! - Prevents battery drain from constant reconnection attempts
-//! - Gives network time to stabilize
-//!
-//! ## Health Check Loop
-//!
-//! Even when connected, we periodically verify the connection is working:
-//! - Runs every 30 seconds
-//! - Can trigger reconnection if health check fails
-//! - Helps detect "zombie" connections (connected but not working)
-//!
-//! ## Example Reconnection Flow
-//!
-//! ```text
-//! [Connected] ──┐
-//!               │
-//!               ▼
-//!         Connection Lost!
-//!               │
-//!               ▼
-//!         [Reconnecting]
-//!               │
-//!               ├─► Attempt 1 (wait 1s) ──► Failed
-//!               │                            │
-//!               ├─◄──────────────────────────┘
-//!               │
-//!               ├─► Attempt 2 (wait 2s) ──► Failed
-//!               │                            │
-//!               ├─◄──────────────────────────┘
-//!               │
-//!               ├─► Attempt 3 (wait 4s) ──► Success!
-//!               │                            │
-//!               ▼                            ▼
-//!         [Connected] ◄──────────────────────┘
-//! ```
+//! # Non-goals
+//! This module does not perform actual reconnection (delegated to controller).
+//! It does not implement network health checks (caller provides check function).
+//! It does not handle user-initiated disconnects (controller calls reset()).
 
 use anyhow::Result;
 use std::time::Duration;

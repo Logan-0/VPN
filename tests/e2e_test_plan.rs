@@ -1,22 +1,16 @@
-//! # End-to-End Test Plan
+//! E2E Test Plan — End-to-end test documentation for VPN system validation.
 //!
-//! This file documents the E2E test cases that validate the VPN works as a
-//! complete system. Tests marked `#[ignore]` require root privileges and a
-//! running WireGuard server. They can be run with:
+//! # Test Environment
+//! Tests marked `#[ignore]` require root privileges and a running WireGuard server.
+//! Run with: `sudo cargo test --test e2e_test_plan -- --ignored`
 //!
-//! ```bash
-//! sudo cargo test --test e2e_test_plan -- --ignored
-//! ```
-//!
-//! ## Test Environment Requirements
-//!
+//! Requirements:
 //! - Linux with iproute2 and iptables installed
 //! - Root or CAP_NET_ADMIN capability
-//! - For full tunnel tests: a WireGuard server endpoint
-//! - For Pi-hole tests: a Pi-hole instance (or mock DNS server)
+//! - WireGuard server endpoint for tunnel tests
+//! - Pi-hole instance for DNS tests
 //!
-//! ## E2E Test Matrix
-//!
+//! # Test Matrix
 //! | # | Test Case                              | Components Exercised                        |
 //! |---|----------------------------------------|---------------------------------------------|
 //! | 1 | TUN device lifecycle                   | LinuxPlatform                               |

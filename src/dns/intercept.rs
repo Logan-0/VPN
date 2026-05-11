@@ -1,54 +1,24 @@
-//! # DNS Interception at the TUN Layer
+//! Intercept — TUN-layer DNS packet inspection and blocking.
 //!
-//! This module inspects raw IPv4 packets coming out of the TUN device,
-//! detects DNS queries, and either lets them pass through (default) or
-//! synthesises an immediate "blocked" response for domains that match
-//! the user's blocklist.
+//! # Role in RustVPN
+//! This module inspects raw IPv4 packets from the TUN device to detect
+//! DNS queries, extracts domain names, and synthesizes blocked responses
+//! for domains matching the blocklist. This provides 100% coverage since
+//! all traffic passes through the TUN device regardless of application.
 //!
-//! ## Why Intercept Here Instead of Above the OS?
+//! # Main Contracts
+//! - Input: Raw IPv4 packets from TUN device, DNS filter blocklist
+//! - Output: Synthetic DNS responses for blocked domains, None for allowed traffic
+//! - Safety: Blocked domains return 0.0.0.0 with short TTL to prevent caching issues
 //!
-//! Browsers, system resolvers, and individual programs all bypass any
-//! library-level DNS wrapper we could install. The only place every UDP
-//! packet must pass through is the TUN device, where we already have a
-//! read loop. Filtering at the TUN layer therefore covers 100% of the
-//! traffic the VPN sees, regardless of which application produced it.
+//! # Platform Notes
+//! IPv4-only implementation; IPv6 queries pass through unmodified.
+//! Works on all platforms with TUN device support.
 //!
-//! ## What We Do
-//!
-//! For each outbound packet read from the TUN device:
-//!
-//! 1. Inspect the IP/UDP headers cheaply -- if it's not IPv4 + UDP +
-//!    `dst port == 53`, return `None` immediately (the packet flows
-//!    through the tunnel as before).
-//! 2. Parse just enough of the DNS message to extract the first
-//!    question's QNAME.
-//! 3. Ask [`DnsFilter::is_blocked`] whether to drop the query.
-//! 4. If blocked, synthesise a DNS response with `RCODE=NoError` and a
-//!    single `A` answer pointing to `0.0.0.0`. The browser interprets
-//!    that as "host unreachable" and gives up cleanly.
-//! 5. Wrap the DNS response in a UDP datagram (ports swapped) and an
-//!    IPv4 packet (addresses swapped, fresh checksums).
-//!
-//! ## Why `A` -> `0.0.0.0` Instead of `NXDOMAIN`?
-//!
-//! `NXDOMAIN` is technically more correct ("this name does not exist"),
-//! but many browsers and OS resolvers cache `NXDOMAIN` aggressively,
-//! including across DNS server changes. `0.0.0.0` is the long-standing
-//! Pi-hole convention: short TTL, no caching surprises, and the
-//! connection attempt fails fast at the socket layer.
-//!
-//! ## Scope Limits
-//!
-//! - **IPv4 only.** IPv6 DNS queries (AAAA records over IPv6 transport)
-//!   are passed through unmodified. Adding IPv6 support is straightforward
-//!   but adds another set of headers to parse and is not needed for the
-//!   minimum viable ad-blocking feature.
-//! - **Single question.** The DNS protocol allows multiple questions per
-//!   message but in practice every query contains exactly one. We bail
-//!   out (pass through) on multi-question messages.
-//! - **A and AAAA queries only.** Other record types (TXT, MX, SRV) are
-//!   not blocklist-matched -- they pass through to the upstream resolver
-//!   inside the VPN tunnel.
+//! # Non-goals
+//! This module does not implement DNS filtering logic (delegated to filter module).
+//! It does not handle IPv6 DNS queries (IPv4 only for MVP).
+//! It does not support multi-question DNS messages (passes through).
 
 use crate::dns::filter::DnsFilter;
 

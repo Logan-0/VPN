@@ -1,9 +1,17 @@
-//! # Configuration Unit Tests
+//! Configuration — Unit tests for VPN configuration management.
 //!
-//! Tests for VPN configuration load/save/default behavior including:
-//! - Default values
+//! # Test Coverage
+//! Tests VPN configuration load/save/default behavior including:
+//! - Default values for all configuration fields
 //! - TOML serialization round-trip
-//! - Custom DNS server (Pi-hole) field
+//! - Custom DNS server (Pi-hole) field handling
+//! - Missing field handling with defaults
+//!
+//! # Regression Prevention
+//! These tests prevent regressions in:
+//! - Configuration serialization/deserialization
+//! - Default value initialization
+//! - Field addition/removal compatibility
 
 use rust_vpn::config::VpnConfig;
 

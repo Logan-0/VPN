@@ -1,53 +1,24 @@
-//! # DNS Filter Module
+//! Filter — DNS query filtering using blocklists.
 //!
+//! # Role in RustVPN
 //! This module handles DNS query filtering to block access to known
-//! malicious domains, advertisements, and tracking servers.
+//! malicious domains, advertisements, and tracking servers. It maintains
+//! a blocklist HashSet for fast domain lookup and supports external
+//! DNS servers like Pi-hole for delegated filtering.
 //!
-//! ## Networking Concepts
+//! # Main Contracts
+//! - Input: Domain names from DNS queries, blocklist configuration
+//! - Output: Boolean allow/block decisions
+//! - Safety: Blocked domains return 0.0.0.0; external DNS mode bypasses local filtering
 //!
-/// ### DNS Filtering
-///
-/// DNS filtering intercepts DNS queries and checks them against blocklists
-/// before allowing the query to proceed. This prevents access to:
-///
-/// - **Malware domains**: Known malicious websites
-/// - **Advertisement servers**: Ad tracking and delivery
-/// - **Tracking domains**: Analytics and user tracking
-/// - **Phishing sites**: Fraudulent websites
-///
-/// ### How DNS Filtering Works
-///
-/// ```text
-/// User enters URL in browser
-///     ↓
-/// Browser needs to resolve domain to IP
-///     ↓
-/// DNS query sent to DNS resolver
-///     ↓
-/// DNS Filter intercepts query
-///     ↓
-/// Check domain against blocklist
-///     ↓
-/// If blocked: Return 0.0.0.0 (blocked)
-/// If allowed: Forward to real DNS server
-/// ```
-///
-/// ### Blocklist Sources
-///
-/// Common blocklist sources include:
-/// - AdGuard DNS filter
-/// - Steven Black's hosts file
-/// - EasyList
-/// - MalwareDomainList
-/// - User-defined custom lists
-///
-/// ### Integration with VPN
-///
-/// DNS filtering integrates with the VPN by:
-/// 1. Intercepting DNS queries before they leave the TUN device
-/// 2. Checking queries against blocklists
-/// 3. Using DNS-over-HTTPS (DoH) for encrypted DNS queries
-/// 4. Preventing DNS leaks by routing all DNS through VPN
+//! # Platform Notes
+//! Platform-agnostic HashSet-based filtering works on all platforms.
+//! External DNS mode forwards queries to local network DNS servers.
+//!
+//! # Non-goals
+//! This module does not parse DNS packets (delegated to intercept module).
+//! It does not perform DNS resolution (delegated to resolver module).
+//! It does not manage blocklist updates (static initialization only).
 
 use anyhow::Result;
 use std::collections::HashSet;
