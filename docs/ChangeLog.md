@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ProjectSummary.md with feature summary
   - ChangeLog.md with version history
 
+### Changed
+
+- Set `GITHUB_RELEASES_API_URL` to the real endpoint: `https://api.github.com/repos/Logan-0/VPN/releases/latest`.
+- Updated update-checker documentation examples in `docs/RoadMap.md` and `docs/Education.md` to match the real repository URL.
+
 ---
 
 ## Completed Items (April 2026)

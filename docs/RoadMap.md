@@ -139,9 +139,8 @@ fires exactly one `UpdateAvailable` event when a newer release is
 found. The GUI renders a dismissable banner above the main controls
 when `pending_update` is `Some`.
 
-The `GITHUB_RELEASES_API_URL` constant was deliberately left at
-`owner/repo` per the user's preference; replace it before the first
-public release.
+`GITHUB_RELEASES_API_URL` now points to the real repository endpoint:
+`https://api.github.com/repos/Logan-0/VPN/releases/latest`.
 
 ### 7. Configurable Client TUN IP
 

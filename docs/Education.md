@@ -379,7 +379,7 @@ sudo setcap cap_net_admin+ep ./target/release/rust-vpn
 4. User can manually download new version
 
 **Configuration**:
-- `GITHUB_RELEASES_API_URL` constant (set to owner/repo before release)
+- `GITHUB_RELEASES_API_URL` constant (`https://api.github.com/repos/Logan-0/VPN/releases/latest`)
 - Runs on application startup
 
 ---

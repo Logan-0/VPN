@@ -29,10 +29,8 @@ use serde::Deserialize;
 ///
 /// `https://api.github.com/repos/<owner>/<repo>/releases/latest`
 ///
-/// Replace `owner/repo` with the actual GitHub user and repository name
-/// before the first public release. For example, if the project lives at
-/// `https://github.com/acme/rustvpn`, set this to:
-/// `"https://api.github.com/repos/acme/rustvpn/releases/latest"`
+/// This project uses:
+/// `"https://api.github.com/repos/Logan-0/VPN/releases/latest"`
 ///
 /// ## What the API Returns
 ///
@@ -48,10 +46,8 @@ use serde::Deserialize;
 /// A named constant is easier to locate with a project-wide search than a
 /// URL buried in implementation code, and makes it obvious this value must
 /// be changed before publishing.
-///
-/// TODO: replace `owner/repo` with the real repository path before release.
 pub const GITHUB_RELEASES_API_URL: &str =
-    "https://api.github.com/repos/owner/repo/releases/latest";
+    "https://api.github.com/repos/Logan-0/VPN/releases/latest";
 
 /// GitHub API response for latest release
 #[derive(Debug, Deserialize)]
@@ -137,7 +133,7 @@ impl UpdateChecker {
     /// 
     /// ### GitHub API Endpoint
     /// 
-    /// `https://api.github.com/repos/owner/repo/releases/latest`
+    /// `https://api.github.com/repos/Logan-0/VPN/releases/latest`
     /// 
     /// Response format (simplified):
     /// ```json
@@ -145,7 +141,7 @@ impl UpdateChecker {
     ///   "tag_name": "v0.2.0",
     ///   "name": "RustVPN 0.2.0",
     ///   "body": "Release notes...",
-    ///   "html_url": "https://github.com/owner/repo/releases/tag/v0.2.0"
+    ///   "html_url": "https://github.com/Logan-0/VPN/releases/tag/v0.2.0"
     /// }
     /// ```
     /// 
