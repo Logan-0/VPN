@@ -1,32 +1,25 @@
-//! # Windows Packet Loop (WinTun)
+//! Packet Loop (Windows) — WinTun session-based packet forwarding.
 //!
-//! The Windows counterpart of `packet_loop.rs`. The two files have the
-//! same job -- bridge the OS-level virtual interface and the UDP socket
-//! that talks to the VPN server -- but the I/O surface differs:
+//! # Role in RustVPN
+//! This module implements the Windows-specific packet processing loop using
+//! the WinTun driver API. It bridges the WinTun virtual adapter with the
+//! UDP socket to the VPN server, handling outgoing traffic (TUN→UDP),
+//! incoming traffic (UDP→TUN), and periodic keepalive packets.
 //!
-//! - **Linux** uses a raw file descriptor returned by `/dev/net/tun`,
-//!   read with `std::fs::File::read` from a `spawn_blocking` thread.
-//! - **Windows** uses the WinTun [`Session`] object's `send_packet` /
-//!   `receive_blocking` methods. There is no file descriptor.
+//! # Main Contracts
+//! - Input: WinTun session handle, UDP socket, tunnel encryption/decryption
+//! - Output: Encrypted packets to VPN server, decrypted packets to TUN
+//! - Safety: DNS filtering blocks malicious queries; errors logged per-packet
 //!
-//! We keep the two implementations as separate modules rather than
-//! parameterising one because the platform APIs are too divergent to
-//! abstract cleanly without runtime cost; gating with `#[cfg]` makes
-//! each version straightforward to read on its own.
+//! # Platform Notes
+//! Windows-specific using WinTun driver with ring-buffer API (no file descriptors).
+//! Uses tokio::spawn_blocking for WinTun receive_blocking calls.
+//! Requires WinTun driver installation and Administrator privileges.
 //!
-//! ## Concurrency Model
-//!
-//! WinTun's `receive_blocking` is genuinely blocking (it parks on a
-//! kernel event), so we run it in a `tokio::task::spawn_blocking`
-//! thread that forwards packets to an mpsc channel. The async select
-//! loop handles three sources:
-//!
-//!   1. Packets arriving from the TUN reader task (-> encrypt -> UDP)
-//!   2. Datagrams arriving on the UDP socket (-> decrypt -> TUN write)
-//!   3. The 25-second WireGuard keepalive timer
-//!
-//! This mirrors the Linux loop, so the only platform-specific code is
-//! around the TUN reader/writer.
+//! # Non-goals
+//! This module does not implement encryption/decryption (delegated to tunnel module).
+//! It does not implement DNS filtering logic (delegated to dns filter module).
+//! It does not handle connection state management (delegated to controller).
 
 #![cfg(target_os = "windows")]
 
