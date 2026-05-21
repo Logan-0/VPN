@@ -33,29 +33,13 @@ use zeroize::Zeroizing;
 
 // ── Platform abstraction ─────────────────────────────────────────────────────
 //
-// Each supported platform exposes a `Platform` type with `new()`,
-// `create_tun()`, and `cleanup()`, plus a `run_packet_loop` entry point.
-// The two implementations (Linux fd-based, Windows WinTun-session-based)
-// share the same surface API by re-exporting under common names so the
-// Connect handler below can treat them interchangeably.
-//
-// `TunHandle` is the platform-specific "thing the packet loop needs to do
-// I/O against the TUN device": a raw fd on Unix, a session handle on
-// Windows. Wrapping it in a type alias keeps the Connect handler free of
-// `#[cfg]` noise around the call sites.
-#[cfg(target_os = "linux")]
+// Linux-only implementation.
+// The Platform type exposes `new()`, `create_tun()`, and `cleanup()`,
+// plus a `run_packet_loop` entry point.
+// TunHandle is the raw file descriptor for the TUN device.
 use crate::core::packet_loop::{run_packet_loop, PacketLoopExit};
-#[cfg(target_os = "linux")]
 use crate::platform::linux::LinuxPlatform as Platform;
-#[cfg(target_os = "linux")]
 type TunHandle = std::os::unix::io::RawFd;
-
-#[cfg(target_os = "windows")]
-use crate::core::packet_loop_windows::{run_packet_loop, PacketLoopExit};
-#[cfg(target_os = "windows")]
-use crate::platform::windows::WindowsPlatform as Platform;
-#[cfg(target_os = "windows")]
-type TunHandle = std::sync::Arc<wintun::Session>;
 
 /// Commands sent from the GUI to the VPN core.
 ///

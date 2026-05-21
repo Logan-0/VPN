@@ -10,7 +10,7 @@ Detailed documentation is available in the `docs/` folder:
 
 ## Overview
 
-A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — cross-platform across Linux, macOS, and Windows.
+A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — Linux-only implementation.
 
 For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/Education.md`.
 
@@ -26,7 +26,7 @@ For detailed explanations of TUN devices, kill switches, DNS filtering, exponent
 
 This project provides:
 - **VPN client** using WireGuard protocol for encrypted tunnels
-- **Cross-platform support** (Linux, macOS, Windows) from a single codebase
+- **Linux support** with CAP_NET_ADMIN for non-root operation
 - **Kill switch** with firewall-enforced leak prevention
 - **DNS filtering** with blocklist-based ad and malware blocking
 - **Auto-reconnect** with exponential backoff
@@ -62,8 +62,6 @@ This project provides:
 
 ### Platform Support
 - **Linux** — Full support with CAP_NET_ADMIN for non-root operation
-- **macOS** — Full support (requires root)
-- **Windows** — Structural support (requires Administrator, operationally unverified)
 
 ### Deployment
 - **Debian .deb packages** — Easy installation on Debian-based systems
