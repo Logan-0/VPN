@@ -1,5 +1,9 @@
 # Project Summary - RustVPN
 
+**Project Status**: Release Candidate (v0.4.0)
+
+**Version**: 0.4.0
+
 ## Documentation
 
 Detailed documentation is available in the `docs/` folder:

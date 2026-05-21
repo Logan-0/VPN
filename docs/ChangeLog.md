@@ -5,7 +5,16 @@ All notable changes to the RustVPN project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**Project Status**: Alpha
+**Project Status**: Release Candidate (v0.4.0)
+
+---
+
+## [0.4.0] - 2026-05-21
+
+### Changed
+- **Version bump**: Updated from 0.1.0 to 0.4.0 to reflect completion of all core features and readiness for final release.
+- **Project Status**: Transitioned from Alpha to Release Candidate.
+- **Platform Support**: Refactored to Linux-only with full CAP_NET_ADMIN support.
 
 ---
 
