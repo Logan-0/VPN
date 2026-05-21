@@ -9,11 +9,12 @@ This document explains the overarching architecture and educational philosophy b
 This project demonstrates how to build a secure, lightweight VPN client using the WireGuard protocol. It showcases:
 - **VPN technology** and how encrypted tunnels work
 - **TUN (virtual network) devices** and how the OS uses them
-- **Kill switch implementation** with firewall rules
+- **Kill switch implementation** with firewall rules (iptables on Linux)
 - **DNS filtering** at the network layer
-- **Cross-platform Rust development** with conditional compilation
+- **Linux-specific system programming** with CAP_NET_ADMIN capabilities
 - **Rust's module system** for organizing complex applications
 - **Configuration management** with TOML and Serde
+- **Platform abstraction** for OS-specific operations
 
 ---
 
@@ -34,7 +35,8 @@ Core VPN Layer     (src/core/)
   Manages the WireGuard tunnel, activates kill switch, handles reconnection
       |
 Platform Layer     (src/platform/)
-  OS-specific: creates TUN device, configures routing, manages firewall rules
+  Linux-only: creates TUN device, configures routing with iptables, manages firewall rules
+  Requires CAP_NET_ADMIN capability for non-root operation
       |
 Network Interface
   Actual packets leave/enter the machine here
