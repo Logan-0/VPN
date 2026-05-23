@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-05-21
 
 ### Changed
-- **Version bump**: Updated from 0.1.0 to 0.4.0 to reflect completion of all core features and readiness for final release.
-- **Project Status**: Transitioned from Alpha to Release Candidate.
-- **Platform Support**: Refactored to Linux-only with full CAP_NET_ADMIN support.
+- **Version bump**: 0.1.0 → **0.4.0** — release candidate; core features complete.
+- **Project Status**: Alpha → **Release Candidate**.
+- **Platform Support**: Linux-only with full CAP_NET_ADMIN support.
 
 ---
 

@@ -1,12 +1,9 @@
-# RustVPN — Remaining Work
+# RustVPN — Roadmap
 
-**Last Updated**: April 26, 2026
+**Version**: 0.4.0 (Release Candidate)  
+**Last Updated**: 2026-05-22
 
-This document tracks the items from the prior version of this file and
-their current status. The Linux build is operationally complete; Windows
-is structurally complete (compiles cleanly under `cargo check
---target x86_64-pc-windows-gnu`) but has not been exercised on a real
-Windows host.
+Linux-only MVP is feature-complete and operationally validated. Ready for final release packaging.
 
 ## Current Operational Snapshot
 

@@ -2,7 +2,7 @@
 
 **Project Status**: Release Candidate (v0.4.0)
 
-**Version**: 0.4.0
+**Version**: 0.4.0 (documented release; see `Projects/VersioningGuide.md`)
 
 ## Documentation
 
@@ -14,7 +14,7 @@ Detailed documentation is available in the `docs/` folder:
 
 ## Overview
 
-A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — Linux-only implementation.
+A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — **Linux-only** implementation (v0.4.0 RC).
 
 For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/Education.md`.
 
