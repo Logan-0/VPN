@@ -1,5 +1,6 @@
 # RustVPN — Roadmap
 
+**Project Status**: Release Candidate  
 **Version**: 0.4.0 (Release Candidate)  
 **Last Updated**: 2026-05-22
 
