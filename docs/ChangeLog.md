@@ -5,7 +5,28 @@ All notable changes to the RustVPN project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**Project Status**: Release Candidate (v0.4.0)
+**Project Status**: Stable (v1.0.0)
+
+---
+
+## [1.0.0] - 2026-07-09
+
+### Changed
+- **Version bump**: 0.4.0 → **1.0.0** — Stable release; documented scope is frozen.
+- **Project Status**: Release Candidate → **Stable**.
+- Fixed broken sequential numbering in `docs/RoadMap.md` (previously skipped
+  items 4-5 after Windows/macOS entries were removed without renumbering).
+- Removed stale cross-platform (macOS/Windows) claims from `docs/Education.md`
+  and `docs/ProjectSummary.md`'s Technology Stack, Quick Start, and
+  Configuration File Location sections — RustVPN is Linux-only with no
+  intention of adding other platforms.
+- Corrected `Cargo.toml`'s and `debian/control`'s package descriptions, which
+  still advertised "cross-platform across Linux, macOS, and Windows."
+
+### Scope for 1.0.0
+No further optional features are planned. The only remaining, non-blocking
+work is expanding `resources/servers.toml` with additional real server
+endpoints as they become available — operational upkeep, not development.
 
 ---
 
@@ -37,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## Completed Items (April 2026)
+
+**Historical snapshot** — this section and the three tables immediately
+below it (Project Statistics, Platform Status, Known Limitations, Version
+History Summary) describe the state of the project in April 2026, before
+Windows/macOS support was removed in commit `bf1a8a7`. Items 4 and 7 below
+(Windows TUN Device, macOS TUN Device) no longer exist in the tree. See the
+`[1.0.0]` entry above and `docs/RoadMap.md` for current, accurate status.
 
 ### 1. Real Server List
 - Placeholder server list with cryptographically valid base64 X25519 public keys
@@ -127,25 +155,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Status | Description |
 |--------|-------------|
-| Alpha | Linux operationally complete, Windows structurally complete, macOS stub |
+| Stable (current) | v1.0.0 — Linux-only, feature-complete; no further platform or feature work planned |
+| Alpha (historical, April 2026) | Linux operationally complete, Windows structurally complete, macOS stub — Windows/macOS later removed in `bf1a8a7` |
 
 ---
 
 ## Next Steps
 
-### Windows Operational Completion
-- Run on real Windows 10/11
-- Bundle wintun.dll with release artifact
-- Verify netsh argument quoting
-- Confirm WinTun adapter cleanup
-- End-to-end smoke test with real WireGuard server
+None required for v1.0.0 — the project is considered feature-complete, and
+no further optional features are planned.
 
-### Linux Enhancements
-- Provide real server endpoint
-- Production deployment testing
-- Performance optimization
+The only ongoing, non-blocking task is adding more real server endpoints to
+`resources/servers.toml` as they become available; this is operational
+upkeep, not development work.
 
-### General
-- Consider macOS implementation if test machine becomes available
-- Add more server locations
-- Implement additional security features
+Windows and macOS platform support were evaluated and explicitly retired
+(commit `bf1a8a7`; see `docs/RoadMap.md`). There is no intention to revisit
+either platform.

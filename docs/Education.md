@@ -14,7 +14,10 @@ This project demonstrates how to build a secure, lightweight VPN client using th
 - **Linux-specific system programming** with CAP_NET_ADMIN capabilities
 - **Rust's module system** for organizing complex applications
 - **Configuration management** with TOML and Serde
-- **Platform abstraction** for OS-specific operations
+
+RustVPN is a Linux-only project (v1.0.0, feature-complete). Windows and
+macOS support were evaluated and deliberately retired — see `docs/RoadMap.md`
+for why — so this document describes the Linux implementation only.
 
 ---
 
@@ -52,11 +55,9 @@ Network Interface
 | Core tunnel | `src/core/` | WireGuard session management, encryption loop |
 | Kill switch | `src/core/killswitch.rs` | Firewall rules that block non-VPN traffic |
 | Auto-reconnect | `src/core/reconnect.rs` | Exponential backoff reconnection logic |
-| DNS filtering | `src/dns/` | Intercepts DNS queries, checks blocklists, uses DoH |
+| DNS filtering | `src/dns/` | Intercepts DNS queries, checks blocklists; DoH resolver present but dormant |
 | GUI | `src/gui/app.rs` | Iced graphical interface (Elm architecture) |
-| Linux platform | `src/platform/linux.rs` | `ip tuntap`, `iptables`, routing tables |
-| macOS platform | `src/platform/macos.rs` | `utun` device, `pf` firewall, routing |
-| Windows platform | `src/platform/windows.rs` | WinTun driver, Windows Firewall |
+| Linux platform | `src/platform/linux.rs` | `ip tuntap`, `iptables`, routing tables — the only platform module in the tree |
 | Updater | `src/update.rs` | Checks GitHub releases for newer version |
 
 ---
@@ -75,10 +76,8 @@ Network Interface
 5. Receives encrypted packets from the server, **decrypts** them
 6. Writes plaintext back to `tun0` so the OS delivers them normally
 
-**Platform-specific implementations**:
-- **Linux**: `ip tuntap add dev tun0 mode tun`
-- **macOS**: `utun` device with `ioctl`-based IP configuration
-- **Windows**: WinTun driver via `wintun` crate
+**Implementation**:
+- **Linux** (the only supported platform): `ip tuntap add dev tun0 mode tun`
 
 ### 2. WireGuard Protocol
 
@@ -108,26 +107,28 @@ Network Interface
    - Loopback (127.0.0.1)
 3. Removes firewall rules when VPN disconnects
 
-**Platform-specific implementations**:
-- **Linux**: `iptables` rules
-- **macOS**: `pf` firewall
-- **Windows**: Windows Firewall API
+**Implementation**:
+- **Linux** (the only supported platform): `iptables` rules
 
 ### 4. DNS Filtering
 
 **Purpose**: Block ads and malware at the DNS level
 
 **How it works**:
-1. Intercepts DNS queries from the TUN device
+1. Intercepts DNS queries from the TUN device before they're encrypted
 2. Checks the domain against a blocklist
-3. For blocked domains: Returns fake "not found" response (0.0.0.0)
-4. For allowed domains: Forwards query over DNS-over-HTTPS (DoH)
+3. For blocked domains: synthesises a fake "not found" response (0.0.0.0) and writes it straight back to the TUN device, never touching the tunnel
+4. For allowed domains: the query proceeds through the normal encrypted WireGuard tunnel like any other packet — no separate DoH hop is used
 
 **Benefits**:
 - Blocks ads before they load
 - Prevents malware domains
-- Encrypts DNS queries (via DoH)
+- DNS queries are already encrypted end-to-end inside the WireGuard tunnel
 - ISP cannot see which sites you visit
+
+A `DnsResolver` type implementing DNS-over-HTTPS exists in `src/dns/resolver.rs`
+but is intentionally not called from the live path — see `docs/RoadMap.md`,
+item 2, for why.
 
 ### 5. Auto-Reconnect
 
@@ -165,29 +166,6 @@ Network Interface
 - Selected VPN server
 - Client TUN IP address
 
-### 7. Cross-Platform Support
-
-**Purpose**: Run on Linux, macOS, and Windows from a single codebase
-
-**How it works**:
-1. Uses Rust's conditional compilation: `#[cfg(target_os = "...")]`
-2. Only the block matching the target OS is compiled
-3. Platform-specific code lives in `src/platform/`
-4. Shared code uses cfg-aliased types
-
-**Example**:
-```rust
-#[cfg(target_os = "linux")]
-fn setup_firewall() {
-    // use iptables here
-}
-
-#[cfg(target_os = "macos")]
-fn setup_firewall() {
-    // use pf here
-}
-```
-
 ---
 
 ## GUI Architecture
@@ -207,7 +185,6 @@ fn setup_firewall() {
 
 **Features**:
 - Pure Rust (no external GUI toolkit dependencies)
-- Cross-platform (Linux, macOS, Windows)
 - Modern, clean interface
 
 ---
@@ -293,7 +270,7 @@ OS delivers to application
 **Purpose**: Prevent DNS leaks and block malicious domains
 
 **Implementation**:
-- DNS-over-HTTPS encrypts DNS queries
+- DNS queries travel encrypted inside the WireGuard tunnel itself (no separate DoH hop needed)
 - Blocklist prevents access to known bad domains
 - Interception at TUN layer ensures all DNS is filtered
 
@@ -318,7 +295,7 @@ This section consolidates the core networking concepts used throughout this proj
 ### DNS and Leak Prevention
 
 - DNS queries are filtered against blocklists before external resolution.
-- DNS-over-HTTPS support is available for encrypted resolver communication.
+- Allowed queries ride the encrypted WireGuard tunnel; a separate DoH resolver exists in code but is not wired into this path.
 - Kill switch and routing policy work together to prevent DNS and IP leaks on disconnects.
 
 ---
@@ -359,14 +336,6 @@ sudo setcap cap_net_admin+ep ./target/release/rust-vpn
 - Configure routing tables
 - Install firewall rules
 - Minimum necessary privileges
-
-### macOS / Windows: Root/Admin
-
-**Requirement**: Root privileges required
-
-**macOS**: `sudo ./target/release/rust-vpn`
-
-**Windows**: Run as Administrator
 
 ---
 
@@ -412,4 +381,4 @@ sudo dpkg -i target/debian/rust-vpn_*.deb
 
 ## Conclusion
 
-This architecture demonstrates how to build a secure, cross-platform VPN client using Rust. The layered design, platform-specific abstractions, and comprehensive security features (kill switch, DNS filtering, zero logs) showcase modern systems programming practices. The project serves as an excellent educational resource for understanding VPN technology, network programming, and cross-platform development in Rust.
+This architecture demonstrates how to build a secure, Linux-only VPN client using Rust. The layered design and comprehensive security features (kill switch, DNS filtering, zero logs) showcase modern systems programming practices. The project serves as an excellent educational resource for understanding VPN technology and network programming in Rust.

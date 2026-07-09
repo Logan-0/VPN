@@ -1,20 +1,20 @@
 # Project Summary - RustVPN
 
-**Project Status**: Release Candidate (v0.4.0)
+**Project Status**: Stable (v1.0.0)
 
-**Version**: 0.4.0 (documented release; see `Projects/VersioningSpec.md`)
+**Version**: 1.0.0 (documented release; see `Projects/VersioningSpec.md`)
 
 ## Documentation
 
 Detailed documentation is available in the `docs/` folder:
 - `docs/Education.md` — Layered architecture, core components, and implementation details
-- `docs/RoadMap.md` — Project status and future work
+- `docs/RoadMap.md` — Project status and remaining (optional) work
 - `docs/ProjectSummary.md` — This file (feature summary and technology stack)
 - `docs/ChangeLog.md` — Version history
 
 ## Overview
 
-A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — **Linux-only** implementation (v0.4.0 RC).
+A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — **Linux-only** implementation (v1.0.0, feature-complete).
 
 For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/Education.md`.
 
@@ -22,7 +22,7 @@ For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill
 
 The application is organized as a stack of layers. For detailed architecture and module breakdown, see `docs/Education.md`.
 
-For detailed explanations of TUN devices, kill switches, DNS filtering, exponential backoff, TOML configuration, and cross-platform Rust, see `docs/Education.md`.
+For detailed explanations of TUN devices, kill switches, DNS filtering, exponential backoff, and TOML configuration, see `docs/Education.md`.
 
 ---
 
@@ -51,8 +51,7 @@ This project provides:
 
 ### Security Features
 - **Kill switch** — Firewall-enforced leak prevention when tunnel drops
-- **DNS filtering** — Blocklist-based ad and malware blocking at DNS layer
-- **DNS-over-HTTPS** — Encrypted DNS queries
+- **DNS filtering** — Blocklist-based ad and malware blocking at the TUN layer (DNS already travels encrypted inside the WireGuard tunnel; the DoH resolver type exists but is intentionally not wired in — see Technology Stack)
 - **Zero logs** — No connection data, timestamps, or IP addresses written to disk
 - **Path validation** — Prevents configuration file escape attacks
 
@@ -81,15 +80,10 @@ This project provides:
 | Language | Rust | Fast, memory-safe systems language |
 | VPN Protocol | WireGuard | Modern, fast VPN protocol |
 | GUI Framework | Iced | Pure Rust GUI framework (Elm architecture) |
-| Platform Abstraction | Rust cfg() | Conditional compilation for cross-platform |
 | Configuration | TOML + Serde | Configuration file serialization |
 | TUN (Linux) | `ip tuntap` | Linux TUN device creation |
-| TUN (macOS) | `utun` | macOS TUN device |
-| TUN (Windows) | WinTun | Windows TUN driver |
 | Firewall (Linux) | iptables | Linux firewall rules |
-| Firewall (macOS) | pf | macOS firewall |
-| Firewall (Windows) | Windows Firewall API | Windows firewall |
-| DNS | Custom + DoH | DNS filtering and encryption |
+| DNS | Custom + DoH (dormant) | DNS filtering; DoH resolver implemented but not wired into the live path |
 | Packaging | cargo-deb | Debian package building |
 
 ---
@@ -227,28 +221,6 @@ If the GUI doesn't display:
 - Check that DISPLAY is set: `echo $DISPLAY`
 - Try running without Wayland: `WAYLAND_DISPLAY= ./target/release/rust-vpn`
 
-### macOS
-
-Root privileges are required:
-
-```bash
-# Build
-cargo build --release
-
-# Run (requires root)
-sudo ./target/release/rust-vpn
-```
-
-### Windows
-
-```bash
-# Build
-cargo build --release
-
-# Run (as Administrator)
-.\target\release\rust-vpn.exe
-```
-
 ### Debian Package Installation (.deb)
 
 #### Building a .deb Package
@@ -301,8 +273,11 @@ rust-vpn
 | OS | Path |
 |----|------|
 | Linux | `~/.config/rustvpn/config.toml` |
-| macOS | `~/Library/Application Support/RustVPN/config.toml` |
-| Windows | `%APPDATA%\RustVPN\config.toml` |
+
+Linux is the only supported platform; the config-loading code still has
+inert `#[cfg(target_os = "macos"/"windows")]` branches left over from before
+`bf1a8a7` retired those platforms, but they are unreachable in any build this
+project ships.
 
 ---
 
@@ -348,4 +323,4 @@ MIT
 
 ## Conclusion
 
-The RustVPN project is a comprehensive VPN client implementation that demonstrates secure, cross-platform systems programming in Rust. The architecture prioritizes security through zero logs, kill switch, and DNS filtering. The project serves as an excellent educational resource for understanding VPN technology, network programming, and cross-platform development.
+The RustVPN project is a comprehensive, Linux-only VPN client implementation that demonstrates secure systems programming in Rust. The architecture prioritizes security through zero logs, kill switch, and DNS filtering. The project serves as an excellent educational resource for understanding VPN technology and network programming in Rust.

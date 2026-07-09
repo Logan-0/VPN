@@ -14,7 +14,7 @@ license-file = ["LICENSE", "0"]
 extended-description = """\
 A secure, lightweight VPN client written in Rust using the WireGuard protocol.
 It includes a graphical interface, a kill switch, DNS filtering, and automatic
-reconnection — all cross-platform across Linux, macOS, and Windows.
+reconnection — Linux only.
 """
 depends = "$auto"
 section = "net"
