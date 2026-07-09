@@ -10,23 +10,33 @@ Linux-only MVP is feature-complete and operationally validated. Ready for final 
 
 - Version line: `0.1.0` series with active incremental hardening and platform work.
 - Linux status: MVP feature-complete and operationally validated.
-- Windows status: code-complete path compiles cleanly but remains operationally unverified on physical hosts.
-- macOS status: intentionally deferred and tracked as future platform work.
+- Windows/macOS status: **removed** (commit `bf1a8a7`, "Remove macOS and Windows
+  platform support - Linux only") — `src/platform/windows.rs`,
+  `src/platform/macos.rs`, and the Windows TUN scaffold described below no
+  longer exist in the tree. This section previously described that removed
+  work; corrected 2026-07-09 to match the actual repo state (see
+  `docs/ErrorHandlingExecutionSpec.md` for why the stale claim mattered —
+  `core::controller` and `KillSwitch` both had live `#[cfg(target_os = "windows")]`
+  call sites with no corresponding implementation, which is a compile hazard,
+  not just a doc inaccuracy — now fixed alongside this correction).
 - Quality baseline: automated test suite remains green and is the release gate for changes.
 
 ---
 
 ## Summary Table
 
-| # | Item                              | Linux       | Windows                 |
+**Historical record, current release is Linux-only:** the "Windows" column below
+describes work that existed before commit `bf1a8a7` removed macOS/Windows
+platform support. It no longer reflects the current tree — kept here as a
+record of what was built and later retired, not as a current status claim.
+
+| # | Item                              | Linux       | Windows (removed, historical) |
 |---|-----------------------------------|-------------|-------------------------|
-| 1 | Real server list                  | Done        | Done (shared `resources/servers.toml`) |
-| 2 | DNS-over-HTTPS / blocklist wiring | Done        | Done (uses same intercept layer) |
+| 1 | Real server list                  | Done        | Was done (shared `resources/servers.toml`) |
+| 2 | DNS-over-HTTPS / blocklist wiring | Done        | Was done (used same intercept layer) |
 | 3 | Privilege minimization            | Done        | N/A (no equivalent of Linux capabilities) |
-| 4 | macOS TUN device                  | N/A         | N/A — explicitly skipped |
-| 5 | Windows TUN device                | N/A         | Structural only — see notes below |
-| 6 | Update checker GUI banner         | Done        | Done                    |
-| 7 | Configurable client TUN IP        | Done        | Done                    |
+| 6 | Update checker GUI banner         | Done        | Was done                |
+| 7 | Configurable client TUN IP        | Done        | Was done                |
 
 Every "Done" item is wired into the GUI / controller and covered by the
 existing test suite (156 passing, 0 failures, 12 ignored).
@@ -93,38 +103,6 @@ The invoking user's UID/GID is also captured at startup
 (`capture_invoking_user`) for future setuid-based hardening if the
 project ever decides to give up reconnect-without-restart.
 
-### 5. Windows TUN Device — Structural Only
-
-**Files**: `src/platform/windows.rs`, `src/core/packet_loop_windows.rs`,
-`Cargo.toml` (added `wintun = "0.5"` under
-`[target.'cfg(windows)'.dependencies]`).
-
-The Windows path now compiles cleanly via
-`cargo check --target x86_64-pc-windows-gnu`. It uses the WinTun driver
-through the official `wintun` crate, configures the adapter address and
-MTU via `netsh`, and adds the same routing pattern as Linux
-(server bypass route via the original gateway, plus two half-default
-routes through the tunnel). A platform-specific packet loop drives the
-WinTun session API since Windows does not expose a file descriptor.
-
-**What this is**: a code-complete, type-safe scaffold. The Linux
-controller and Windows controller share one Connect handler via a
-`TunHandle` cfg-aliased type, so future Linux-side fixes apply
-automatically.
-
-**What this is not**: operationally validated. None of the following
-have been done because the development environment is Linux-only:
-
-- Running on real Windows 10/11
-- Bundling `wintun.dll` with the release artifact
-- Verifying that the netsh argument quoting handles spaces/Unicode
-- Confirming WinTun adapter cleanup after a crash
-- End-to-end smoke test of TUN read/write through a real WireGuard server
-
-These are deferred for a future Windows-equipped session. Mark Windows
-as **functionally complete but operationally unverified** in release
-notes.
-
 ### 6. Update Checker GUI Banner
 
 **Files**: `src/core/controller.rs`, `src/gui/app.rs`,
@@ -152,17 +130,6 @@ hardcoded `10.8.0.2/24` when unset. Invalid values surface as a
 user-visible error event on the next connect attempt rather than
 silently substituting the default.
 
----
-
-## Skipped Items
-
-### 4. macOS TUN Device
-
-Explicitly skipped per user direction. `src/platform/macos.rs` remains
-the unmodified stub. Adding macOS support requires opening a
-`PF_SYSTEM` / `SYSPROTO_CONTROL` socket for `utun`, `ioctl`-based IP
-configuration, and `route add` for routing -- straightforward but
-needs a macOS test machine.
 
 ---
 

@@ -20,7 +20,7 @@
 //! It does not download or install update packages.
 //! It does not affect VPN tunnel operations.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 /// GitHub Releases API endpoint queried for update checks.
@@ -159,15 +159,26 @@ impl UpdateChecker {
     /// * `Err(_)` - Network error or API failure
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
         let api_url = GITHUB_RELEASES_API_URL;
-        
-        // Make HTTP GET request
-        let client = reqwest::Client::new();
+
+        // reqwest::Client::new() has no default timeout, so an unresponsive
+        // GitHub API would otherwise hang this call indefinitely.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .context("failed to build update-check HTTP client")?;
         let response = client
             .get(api_url)
             .header("User-Agent", "RustVPN")
             .send()
             .await?;
-        
+
+        // Check the status before parsing so a rate-limit (403) or outage
+        // (5xx) response surfaces as a clear "GitHub API returned <status>"
+        // error instead of a misleading "failed to parse JSON" one.
+        let response = response
+            .error_for_status()
+            .context("GitHub releases API returned an error status")?;
+
         // Parse JSON response
         let release: GitHubRelease = response.json().await?;
         

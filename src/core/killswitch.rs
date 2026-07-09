@@ -72,9 +72,10 @@ impl KillSwitch {
     /// * `vpn_interface` - Name of the VPN network interface (e.g., "wg0")
     ///
     /// # Platform Behavior
-    /// - **Linux**: Uses iptables to block all traffic except VPN
-    /// - **macOS**: Uses pf (packet filter) to block traffic
-    /// - **Windows**: Uses Windows Filtering Platform API
+    /// - **Linux**: Uses iptables to block all traffic except VPN — implemented.
+    /// - **macOS** / **Windows**: not implemented yet; this always returns `Err`
+    ///   on these platforms so callers fail closed rather than proceeding
+    ///   unprotected (see [`Self::enable_macos`]/[`Self::enable_windows`]).
     ///
     /// # Example
     /// ```rust,ignore
@@ -153,6 +154,23 @@ impl KillSwitch {
 
     // Platform-specific implementations
 
+    /// Install the iptables rules that make up the Linux kill switch.
+    ///
+    /// # Ordering invariant (why this matters)
+    /// Each `iptables` invocation below is a separate process spawn, and only
+    /// the `-I OUTPUT 1 -j RUSTVPN_OUT` call near the end actually links the
+    /// DROP-based `RUSTVPN_OUT` chain into the traffic path. **If any earlier `iptables`
+    /// call in this sequence fails and this function returns `Err` before
+    /// reaching that last call, no rule has actually blocked anything yet** —
+    /// the OS `OUTPUT` chain is untouched and all traffic still flows exactly
+    /// as if the kill switch were off. This function's `Result` therefore
+    /// cannot be treated as advisory by callers: `KillSwitch::enable`
+    /// propagates it with `?`, and `core::controller`'s `Connect`/
+    /// `SetKillSwitch` handlers must abort (not merely log) on `Err` here —
+    /// see the fail-closed handling in `controller.rs`'s `VpnCommand::Connect`
+    /// arm. A partial failure never leaves an intermediate "some rules
+    /// applied" state that looks protected but isn't: everything before the
+    /// final link-in step is inert until that step runs.
     #[cfg(target_os = "linux")]
     fn enable_linux(&self, vpn_server_ip: IpAddr, vpn_interface: &str) -> Result<()> {
         use std::process::Command;
@@ -232,6 +250,17 @@ impl KillSwitch {
         Ok(())
     }
 
+    /// Remove the iptables rules installed by [`Self::enable_linux`].
+    ///
+    /// Deliberately uses `.output()` (ignoring failures via `let _ =`) rather
+    /// than `?` for every step, unlike `enable_linux`: a partial failure here
+    /// means some cleanup commands didn't run, but that leaves the network
+    /// *more* restricted (rules still in place), never less — which is the
+    /// safe direction to fail in for a kill switch. `Agent`/`KillSwitch`
+    /// callers already treat `disable()` failures as warn-and-continue (see
+    /// `controller.rs`) for the same reason: erring toward "still blocked"
+    /// on cleanup failure is acceptable, unlike erring toward "not blocked"
+    /// on enable failure.
     #[cfg(target_os = "linux")]
     fn disable_linux(&self) -> Result<()> {
         use std::process::Command;
@@ -258,6 +287,54 @@ impl KillSwitch {
             .output();
 
         info!("Linux iptables rules removed successfully");
+        Ok(())
+    }
+
+    /// macOS is not yet supported: no `pf` firewall rules are implemented.
+    ///
+    /// This exists only so `enable()`'s `#[cfg(target_os = "macos")]` call
+    /// site resolves to a clear, fail-closed runtime error instead of a
+    /// confusing "no method named `enable_macos`" compile error. Returning
+    /// `Err` here means `KillSwitch::enable` propagates the failure, and
+    /// `core::controller`'s fail-closed handling refuses to bring up the
+    /// tunnel — so a macOS build cannot connect while claiming kill-switch
+    /// protection it doesn't actually have. Do not change this to `Ok(())`
+    /// without implementing real `pf` rules first.
+    #[cfg(target_os = "macos")]
+    fn enable_macos(&self, _vpn_server_ip: IpAddr, _vpn_interface: &str) -> Result<()> {
+        anyhow::bail!(
+            "kill switch is not implemented on macOS yet (no pf firewall rules) — \
+             refusing to enable so a connection is never made without the \
+             protection the user requested"
+        )
+    }
+
+    /// macOS is not yet supported — see [`Self::enable_macos`]. Disabling a
+    /// kill switch that was never actually enabled is a no-op by definition,
+    /// so unlike `enable_macos` this does not need to error.
+    #[cfg(target_os = "macos")]
+    fn disable_macos(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Windows is not yet supported: no Windows Filtering Platform / `netsh`
+    /// rules are implemented. See [`Self::enable_macos`] for why this
+    /// fails closed with `Err` rather than being left as a compile error.
+    /// Do not change this to `Ok(())` without implementing real firewall
+    /// rules first.
+    #[cfg(target_os = "windows")]
+    fn enable_windows(&self, _vpn_server_ip: IpAddr, _vpn_interface: &str) -> Result<()> {
+        anyhow::bail!(
+            "kill switch is not implemented on Windows yet (no firewall rules) — \
+             refusing to enable so a connection is never made without the \
+             protection the user requested"
+        )
+    }
+
+    /// Windows is not yet supported — see [`Self::enable_windows`]. Disabling
+    /// a kill switch that was never actually enabled is a no-op by definition.
+    #[cfg(target_os = "windows")]
+    fn disable_windows(&self) -> Result<()> {
         Ok(())
     }
 }

@@ -176,16 +176,24 @@ fn check_privileges() -> bool {
     
     #[cfg(target_os = "windows")]
     {
-        // Check if running as Administrator
-        // This is a simplified check - real implementation would use Windows API
-        tracing::warn!("Administrator privilege check not implemented for Windows");
-        true // Temporary: allow running for now
+        // Windows support is not implemented yet (see lib.rs's Platform Notes —
+        // no platform::windows module, no KillSwitch::enable_windows firewall
+        // rules). A privilege gate that can't verify the privilege it's gating
+        // must fail closed, not optimistically proceed: returning `true` here
+        // would let the app limp past this check into TUN-device creation
+        // failures with a confusing later error, or worse, into believing it
+        // has protections it cannot actually provide on this platform.
+        tracing::error!(
+            "Administrator privilege check is not implemented for Windows, and \
+             Windows is not a supported platform yet — refusing to run"
+        );
+        false
     }
-    
+
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        tracing::warn!("Privilege check not implemented for this platform");
-        true // Allow running on other platforms
+        tracing::error!("Privilege check not implemented for this platform — refusing to run");
+        false // Fail closed: an unrecognized platform is not a verified-privileged one.
     }
 }
 

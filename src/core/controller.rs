@@ -368,13 +368,25 @@ impl VpnController {
                     // --- Enable kill switch BEFORE any tunnel traffic can flow ---
                     // (see the kill switch comment block in the worker state section
                     //  for the full rationale on ordering and the server-IP guard)
+                    //
+                    // Fail-closed: if the user asked for kill-switch protection and we
+                    // can't actually install the firewall rules, we must NOT proceed to
+                    // bring up the tunnel — doing so would let traffic flow with no
+                    // firewall backstop, defeating the entire point of the feature.
+                    // Abort the connect attempt instead (`continue` to the next command).
                     if kill_switch_enabled {
                         if let Some(ks) = kill_switch.as_mut() {
                             if let Err(e) = ks.enable(server_addr.ip(), "tun0") {
                                 tracing::error!("Kill switch enable failed: {}", e);
                                 let _ = event_tx.send(VpnEvent::Error(
-                                    format!("Kill switch error: {}", e),
+                                    format!(
+                                        "Kill switch error: {} — refusing to connect without \
+                                         the requested protection",
+                                        e
+                                    ),
                                 ));
+                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                continue;
                             }
                         }
                     }
@@ -682,12 +694,20 @@ impl VpnController {
                             // explicit ALLOW rule for that IP so VPN packets
                             // can still reach the server (for reconnections).
                             // If no server IP is known yet, the Connect handler
-                            // will call enable() when the user connects.
+                            // will call enable() when the user connects (and will
+                            // itself fail closed there if that call fails).
                             if let Some(ip) = last_server_ip {
                                 if let Err(e) = ks.enable(ip, "tun0") {
                                     tracing::error!("Kill switch enable failed: {}", e);
+                                    // Don't leave `kill_switch_enabled = true` lying
+                                    // about protection state — no firewall rule
+                                    // actually exists, so the flag must say so too.
+                                    kill_switch_enabled = false;
                                     let _ = event_tx.send(VpnEvent::Error(
-                                        format!("Kill switch error: {}", e),
+                                        format!(
+                                            "Kill switch error: {} — protection is NOT active",
+                                            e
+                                        ),
                                     ));
                                 }
                             }

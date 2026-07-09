@@ -12,7 +12,10 @@
 //! - Safety: No direct network operations; all VPN work delegated to core
 //!
 //! # Platform Notes
-//! Cross-platform using Iced framework (Linux, macOS, Windows).
+//! The Iced framework itself renders on Linux, macOS, and Windows, but the VPN
+//! core it drives (`core::killswitch`, `platform`) is Linux-only today (see
+//! `lib.rs`'s crate-level Platform Notes) — this GUI is not currently usable
+//! end-to-end on macOS/Windows even though the widget toolkit would build there.
 //! Pure Rust implementation with no C bindings or FFI.
 //!
 //! # Non-goals

@@ -12,10 +12,14 @@
 //! - Safety: Zero-logging architecture, privilege minimization, kill switch
 //!
 //! # Platform Notes
-//! Cross-platform support via conditional compilation:
-//! - Linux: TUN devices with ioctl, iptables firewall
-//! - macOS: UTUN devices with pf firewall
-//! - Windows: WinTun driver with Windows Firewall
+//! Currently **Linux-only** (see `docs/ProjectSummary.md` — v0.4.0 RC is a Linux-focused
+//! release). The codebase is structured for conditional compilation per platform:
+//! - Linux: TUN devices with ioctl, iptables firewall — implemented (`platform::linux`,
+//!   `KillSwitch::enable_linux`/`disable_linux`)
+//! - macOS / Windows: no `platform::macos`/`platform::windows` module exists yet, and
+//!   `KillSwitch` has no `enable_macos`/`enable_windows` implementations — the `#[cfg(...)]`
+//!   call sites for those platforms will not compile. Do not advertise macOS/Windows support
+//!   until these are implemented and tested.
 //!
 //! # Non-goals
 //! This library does not include the main entry point (see main.rs).
@@ -46,9 +50,9 @@ pub mod gui;
 /// Platform-specific networking module.
 ///
 /// Contains OS-specific implementations:
-/// - **linux**: Linux TUN devices, iptables, routing
-/// - **macos**: macOS utun devices, pf, routing
-/// - **windows**: Windows WinTun driver, firewall, routing
+/// - **linux**: Linux TUN devices, iptables, routing — the only implemented platform today
+///
+/// macOS/Windows submodules do not exist yet (see `lib.rs`'s crate-level Platform Notes).
 pub mod platform;
 
 /// Configuration management module.

@@ -27,8 +27,11 @@ assets = [
 maintainer-scripts = "debian/"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1.41", features = ["full"] }
+# Async runtime — trimmed from "full" to what's actually used (runtime
+# construction, select!/test/main macros, mpsc/watch channels, sleep/interval,
+# UdpSocket, and task::spawn_blocking). Add features back if `cargo build`
+# reports a missing one; see OptimizationExecutionSpec.md #3.
+tokio = { version = "1.41", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"] }
 
 # WireGuard protocol
 boringtun = "0.6"
@@ -91,8 +94,15 @@ tokio-test = "0.4"
 mockall = "0.13"
 
 [profile.release]
-opt-level = "z"     # Optimize for size
+opt-level = 3       # Favor packet-loop throughput/latency over binary size
+                    # (was "z" — this is a per-packet crypto/routing hot path,
+                    # not a size-constrained embedded target; see OptimizationExecutionSpec.md #1)
 lto = true          # Link-time optimization
 codegen-units = 1   # Better optimization
 strip = true        # Strip symbols
-panic = "abort"     # Smaller binary
+# panic = "abort" intentionally NOT set: KillSwitch/LinuxPlatform/Tunnel all
+# rely on Drop to remove firewall rules / TUN devices if something goes wrong.
+# "abort" skips unwinding, so those Drop impls would never run on a panic,
+# defeating that safety net (see ErrorHandlingExecutionSpec.md P1). The
+# default `panic = "unwind"` costs a small amount of binary size in exchange
+# for that cleanup guarantee actually firing.

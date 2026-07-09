@@ -2,7 +2,7 @@
 
 **Project Status**: Release Candidate (v0.4.0)
 
-**Version**: 0.4.0 (documented release; see `Projects/VersioningGuide.md`)
+**Version**: 0.4.0 (documented release; see `Projects/VersioningSpec.md`)
 
 ## Documentation
 
@@ -96,36 +96,51 @@ This project provides:
 
 ## Project Structure
 
+Reflects the actual tree as of 2026-07-09 (previously listed files that were
+removed in commit `bf1a8a7`, "Remove macOS and Windows platform support -
+Linux only" — see `docs/RoadMap.md` for what that removal covered):
+
 ```
 VPN/
 ├── src/
 │   ├── main.rs                    Entry point
+│   ├── lib.rs                     Library root
 │   ├── config.rs                  Configuration management
 │   ├── server.rs                  Server registry
-│   ├── core/
-│   │   ├── controller.rs          Core VPN control logic
-│   │   ├── killswitch.rs          Kill switch implementation
-│   │   ├── reconnect.rs           Auto-reconnect logic
-│   │   ├── packet_loop.rs         Packet processing (Linux)
-│   │   └── packet_loop_windows.rs Packet processing (Windows)
-│   ├── dns/
-│   │   └── intercept.rs           DNS filtering
-│   ├── gui/
-│   │   └── app.rs                 Iced GUI application
-│   ├── platform/
-│   │   ├── linux.rs               Linux-specific code
-│   │   ├── macos.rs               macOS-specific code
-│   │   └── windows.rs             Windows-specific code
-│   ├── tunnel/
-│   │   └── noise.rs               WireGuard Noise protocol
 │   ├── update.rs                  Update checker
-│   └── privilege.rs               Privilege management (Linux)
+│   ├── privilege.rs               Privilege management (Linux)
+│   ├── core/
+│   │   ├── mod.rs
+│   │   ├── controller.rs          Core VPN control logic
+│   │   ├── killswitch.rs          Kill switch implementation (Linux only —
+│   │   │                          macOS/Windows fail closed, not implemented)
+│   │   ├── reconnect.rs           Auto-reconnect logic
+│   │   ├── tunnel.rs              WireGuard tunnel (encapsulate/decapsulate)
+│   │   ├── packet_loop.rs         Packet processing (Linux/unix)
+│   │   └── packet_loop_windows.rs Packet processing (Windows) — present but
+│   │                              dead code: no platform::windows to pair with
+│   ├── dns/
+│   │   ├── mod.rs
+│   │   ├── filter.rs              Blocklist filtering
+│   │   ├── intercept.rs           Packet-level DNS interception
+│   │   └── resolver.rs            DoH resolver — defined but not wired in
+│   ├── gui/
+│   │   ├── mod.rs
+│   │   └── app.rs                 Iced GUI application
+│   └── platform/
+│       ├── mod.rs
+│       └── linux.rs               Linux-specific code — the only implemented platform
 ├── resources/
 │   └── servers.toml               VPN server list
 ├── debian/                        Debian packaging
 ├── tests/                         Comprehensive test suite
 └── setup.sh                       Linux setup script
 ```
+
+Note: `src/platform/macos.rs`, `src/platform/windows.rs`, and
+`src/tunnel/noise.rs` (WireGuard Noise protocol, superseded by `boringtun`
+via `src/core/tunnel.rs`) do not exist in the current tree — this file
+previously listed them as present.
 
 ---
 
