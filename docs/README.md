@@ -9,7 +9,7 @@
 Detailed documentation is available in the `docs/` folder:
 - `docs/Education.md` — Layered architecture, core components, and implementation details
 - `docs/RoadMap.md` — Project status and remaining (optional) work
-- `docs/ProjectSummary.md` — This file (feature summary and technology stack)
+- `docs/README.md` — This file (feature summary and technology stack)
 - `docs/ChangeLog.md` — Version history
 
 ## Overview

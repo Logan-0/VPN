@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed broken sequential numbering in `docs/RoadMap.md` (previously skipped
   items 4-5 after Windows/macOS entries were removed without renumbering).
 - Removed stale cross-platform (macOS/Windows) claims from `docs/Education.md`
-  and `docs/ProjectSummary.md`'s Technology Stack, Quick Start, and
+  and `docs/README.md`'s Technology Stack, Quick Start, and
   Configuration File Location sections — RustVPN is Linux-only with no
   intention of adding other platforms.
 - Corrected `Cargo.toml`'s and `debian/control`'s package descriptions, which
@@ -47,7 +47,7 @@ endpoints as they become available — operational upkeep, not development.
 - **Project documentation suite**
   - RoadMap.md with consolidated status and remaining work
   - Education.md with architecture overview
-  - ProjectSummary.md with feature summary
+  - README.md with feature summary
   - ChangeLog.md with version history
 
 ### Changed

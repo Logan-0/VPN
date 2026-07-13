@@ -12,7 +12,7 @@
 //! - Safety: Zero-logging architecture, privilege minimization, kill switch
 //!
 //! # Platform Notes
-//! Currently **Linux-only** (see `docs/ProjectSummary.md` — v0.4.0 RC is a Linux-focused
+//! Currently **Linux-only** (see `docs/README.md` — v0.4.0 RC is a Linux-focused
 //! release). The codebase is structured for conditional compilation per platform:
 //! - Linux: TUN devices with ioctl, iptables firewall — implemented (`platform::linux`,
 //!   `KillSwitch::enable_linux`/`disable_linux`)
