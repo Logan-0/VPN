@@ -107,7 +107,10 @@ impl DnsFilter {
         };
 
         filter.load_default_blocklist();
-        tracing::info!("DNS filter initialized with {} blocked domains", filter.blocked_domains.len());
+        tracing::info!(
+            "DNS filter initialized with {} blocked domains",
+            filter.blocked_domains.len()
+        );
         Ok(filter)
     }
 
@@ -157,16 +160,29 @@ impl DnsFilter {
     pub fn is_blocked(&self, domain: &str) -> bool {
         match self.mode {
             DnsFilterMode::BuiltIn => {
-                let normalized = domain.to_lowercase().trim_end_matches('.').to_string();
+                // The live caller (`try_block_dns_query`) already passes a
+                // lowercased, dot-free qname, so avoid re-allocating: only the
+                // rare mixed-case / trailing-dot / non-ASCII input takes the
+                // owned normalization path.
+                let normalized: std::borrow::Cow<'_, str> = if domain.ends_with('.')
+                    || domain
+                        .bytes()
+                        .any(|b| b.is_ascii_uppercase() || !b.is_ascii())
+                {
+                    std::borrow::Cow::Owned(domain.trim_end_matches('.').to_lowercase())
+                } else {
+                    std::borrow::Cow::Borrowed(domain)
+                };
+                let normalized: &str = normalized.as_ref();
 
                 // Check exact match first
-                if self.blocked_domains.contains(&normalized) {
+                if self.blocked_domains.contains(normalized) {
                     tracing::debug!("DNS blocked (exact): {}", normalized);
                     return true;
                 }
 
                 // Walk parent domains: a.b.example.com -> b.example.com -> example.com
-                let mut remaining = normalized.as_str();
+                let mut remaining = normalized;
                 while let Some(pos) = remaining.find('.') {
                     remaining = &remaining[pos + 1..];
                     if self.blocked_domains.contains(remaining) {

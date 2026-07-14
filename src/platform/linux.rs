@@ -137,7 +137,10 @@ impl LinuxPlatform {
     ) -> Result<&mut tun::platform::Device> {
         tracing::info!(
             "Creating TUN device with IP {}.{}.{}.{}",
-            tun_ip.0, tun_ip.1, tun_ip.2, tun_ip.3
+            tun_ip.0,
+            tun_ip.1,
+            tun_ip.2,
+            tun_ip.3
         );
 
         // 1. Save original default gateway
@@ -159,7 +162,8 @@ impl LinuxPlatform {
         let device = tun::create(&config)
             .context("Failed to create TUN device (do you have root / CAP_NET_ADMIN?)")?;
 
-        let dev_name = device.name()
+        let dev_name = device
+            .name()
             .context("Failed to get TUN device name")?
             .to_string();
 
@@ -170,13 +174,13 @@ impl LinuxPlatform {
         // 3. Add host route for VPN server via original gateway
         if let Some(ref gw) = self.original_gateway {
             let _ = Command::new("ip")
-                .args([
-                    "route", "add",
-                    &vpn_server_ip.to_string(),
-                    "via", gw,
-                ])
+                .args(["route", "add", &vpn_server_ip.to_string(), "via", gw])
                 .output();
-            tracing::info!("Added host route to VPN server {} via {}", vpn_server_ip, gw);
+            tracing::info!(
+                "Added host route to VPN server {} via {}",
+                vpn_server_ip,
+                gw
+            );
         }
 
         // 4. Add default route through TUN device

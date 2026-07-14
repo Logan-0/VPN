@@ -65,7 +65,6 @@ use zeroize::Zeroizing;
 /// WireGuard keepalive interval in seconds (prevents NAT timeout)
 const KEEPALIVE_INTERVAL: u16 = 25;
 
-
 /// Configuration for establishing a WireGuard tunnel.
 ///
 /// This contains all the necessary information to create a secure
@@ -75,20 +74,20 @@ pub struct TunnelConfig {
     /// Client's private key (32 bytes, X25519)
     /// Wrapped in Zeroizing to securely wipe from memory when dropped
     pub private_key: Zeroizing<[u8; 32]>,
-    
+
     /// Server's public key (32 bytes, X25519)
     /// Used to authenticate the server and establish shared secret
     pub server_public_key: [u8; 32],
-    
+
     /// Server's endpoint (IP:Port)
     /// Where to send encrypted UDP packets
     pub server_endpoint: SocketAddr,
-    
+
     /// IP ranges to route through the VPN (CIDR notation)
     /// Example: ("0.0.0.0", 0) routes all IPv4 traffic
     /// Example: ("10.0.0.0", 8) routes only 10.0.0.0/8
     pub allowed_ips: Vec<(IpAddr, u8)>,
-    
+
     /// DNS servers to use when connected
     /// These will handle DNS resolution for VPN traffic
     pub dns_servers: Vec<IpAddr>,
@@ -107,16 +106,16 @@ pub struct TunnelConfig {
 pub enum TunnelState {
     /// No active connection
     Disconnected,
-    
+
     /// Attempting to establish connection
     Connecting,
-    
+
     /// Active VPN tunnel, traffic is encrypted
     Connected,
-    
+
     /// Connection lost, attempting to reconnect
     Reconnecting,
-    
+
     /// Fatal error occurred
     Error,
 }
@@ -128,10 +127,10 @@ pub enum TunnelState {
 pub struct Tunnel {
     /// Tunnel configuration (keys, server, etc.)
     config: TunnelConfig,
-    
+
     /// Current connection state (thread-safe)
     state: Arc<RwLock<TunnelState>>,
-    
+
     /// The actual WireGuard tunnel instance from boringtun
     /// None when disconnected, Some when connected
     wireguard_tunnel: Option<Box<Tunn>>,
@@ -150,7 +149,7 @@ impl Tunnel {
     /// A new `Tunnel` instance in `Disconnected` state
     pub fn new(config: TunnelConfig) -> Result<Self> {
         info!("Creating new WireGuard tunnel");
-        
+
         Ok(Self {
             config,
             state: Arc::new(RwLock::new(TunnelState::Disconnected)),
@@ -180,8 +179,11 @@ impl Tunnel {
     /// 4. Ready to encrypt/decrypt packets
     /// ```
     pub async fn connect(&mut self) -> Result<()> {
-        info!("Initiating tunnel connection to {:?}", self.config.server_endpoint);
-        
+        info!(
+            "Initiating tunnel connection to {:?}",
+            self.config.server_endpoint
+        );
+
         let mut state = self.state.write().await;
         *state = TunnelState::Connecting;
         drop(state);
@@ -189,19 +191,19 @@ impl Tunnel {
         // Convert raw bytes to cryptographic key types
         let private_key = StaticSecret::from(*self.config.private_key);
         let public_key = PublicKey::from(self.config.server_public_key);
-        
+
         // Create WireGuard tunnel with Noise protocol
         // This initiates the cryptographic handshake
         let tunn = Tunn::new(
             private_key,
             public_key,
-            None,                      // No preshared key
-            Some(KEEPALIVE_INTERVAL),  // Send keepalive every 25s
-            0,                         // Index (managed by boringtun)
-            None,                      // No rate limiter
+            None,                     // No preshared key
+            Some(KEEPALIVE_INTERVAL), // Send keepalive every 25s
+            0,                        // Index (managed by boringtun)
+            None,                     // No rate limiter
         )
         .map_err(|e| anyhow::anyhow!("Failed to create WireGuard tunnel: {}", e))?;
-        
+
         self.wireguard_tunnel = Some(Box::new(tunn));
 
         let mut state = self.state.write().await;
@@ -222,14 +224,14 @@ impl Tunnel {
     /// `connect()` is called again.
     pub async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting tunnel");
-        
+
         let mut state = self.state.write().await;
         *state = TunnelState::Disconnected;
         drop(state);
 
         // Dropping the tunnel cleans up all cryptographic state
         self.wireguard_tunnel = None;
-        
+
         info!("Tunnel disconnected");
         Ok(())
     }
@@ -281,7 +283,9 @@ impl Tunnel {
     /// udp_socket.send(&encrypted[..len]).await?;  // Send over internet
     /// ```
     pub fn encapsulate(&mut self, packet: &[u8], dst: &mut [u8]) -> Result<usize> {
-        let tunn = self.wireguard_tunnel.as_mut()
+        let tunn = self
+            .wireguard_tunnel
+            .as_mut()
             .context("Tunnel not initialized")?;
 
         match tunn.encapsulate(packet, dst) {
@@ -330,7 +334,9 @@ impl Tunnel {
     /// tun.write(&plain[..len]).await?;  // Write to TUN device
     /// ```
     pub fn decapsulate(&mut self, packet: &[u8], dst: &mut [u8]) -> Result<usize> {
-        let tunn = self.wireguard_tunnel.as_mut()
+        let tunn = self
+            .wireguard_tunnel
+            .as_mut()
             .context("Tunnel not initialized")?;
 
         match tunn.decapsulate(None, packet, dst) {
@@ -386,10 +392,10 @@ impl Drop for Tunnel {
 /// ```
 pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
     use boringtun::x25519::{PublicKey, StaticSecret};
-    
+
     let private = StaticSecret::random_from_rng(rand::thread_rng());
     let public = PublicKey::from(&private);
-    
+
     (private.to_bytes(), public.to_bytes())
 }
 
@@ -410,16 +416,16 @@ pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
 /// let key = base64_to_key("YourBase64KeyHere==")?;
 /// ```
 pub fn base64_to_key(b64: &str) -> Result<[u8; 32]> {
-    use base64::{Engine as _, engine::general_purpose};
-    
+    use base64::{engine::general_purpose, Engine as _};
+
     let decoded = general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
-    
+
     if decoded.len() != 32 {
         anyhow::bail!("Key must be exactly 32 bytes");
     }
-    
+
     let mut key = [0u8; 32];
     key.copy_from_slice(&decoded);
     Ok(key)
@@ -442,6 +448,6 @@ pub fn base64_to_key(b64: &str) -> Result<[u8; 32]> {
 /// println!("Public key: {}", key_to_base64(&public_key));
 /// ```
 pub fn key_to_base64(key: &[u8; 32]) -> String {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
     general_purpose::STANDARD.encode(key)
 }

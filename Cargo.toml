@@ -39,10 +39,6 @@ boringtun = "0.6"
 # DNS resolution and filtering
 hickory-resolver = { version = "0.24", features = ["dns-over-https-rustls", "dns-over-rustls"] }
 
-# TLS for control channel
-rustls = "0.23"
-rustls-native-certs = "0.8"
-
 # GUI framework (Iced -- cross-platform, pure Rust, Elm-architecture)
 iced = { version = "0.13", features = ["tokio", "wgpu"] }
 
@@ -66,7 +62,6 @@ base64 = "0.22"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "2.0"
 
 # Network interface management
 tun = "0.6"
@@ -76,21 +71,8 @@ tun = "0.6"
 nix = { version = "0.29", features = ["net", "socket", "ioctl", "user"] }
 caps = "0.5"
 
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Networking_WinSock",
-    "Win32_System_Threading",
-] }
-# WinTun: a Layer-3 TUN driver for Windows. The crate dynamically loads
-# wintun.dll at runtime; the DLL must be bundled alongside the binary or
-# present on PATH. See https://www.wintun.net/ for the official driver.
-wintun = "0.5"
-
 [dev-dependencies]
 # Testing
-tokio-test = "0.4"
 mockall = "0.13"
 
 [profile.release]

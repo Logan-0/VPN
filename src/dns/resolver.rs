@@ -21,7 +21,7 @@
 //! It does not handle DNS packet parsing (delegated to intercept module).
 
 use anyhow::{Context, Result};
-use hickory_resolver::config::{ResolverConfig, ResolverOpts, NameServerConfig, Protocol};
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 use std::net::{IpAddr, SocketAddr};
 
@@ -111,10 +111,8 @@ impl DnsResolver {
 
     /// Creates a resolver using Cloudflare DNS-over-HTTPS (1.1.1.1).
     pub fn cloudflare_doh() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::cloudflare_https(),
-            ResolverOpts::default(),
-        );
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::cloudflare_https(), ResolverOpts::default());
         tracing::info!("DNS resolver initialized: Cloudflare DoH (1.1.1.1)");
         Ok(Self {
             resolver,
@@ -124,10 +122,8 @@ impl DnsResolver {
 
     /// Creates a resolver using Google DNS-over-HTTPS (8.8.8.8).
     pub fn google_doh() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::google_https(),
-            ResolverOpts::default(),
-        );
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::google_https(), ResolverOpts::default());
         tracing::info!("DNS resolver initialized: Google DoH (8.8.8.8)");
         Ok(Self {
             resolver,
@@ -175,7 +171,8 @@ impl DnsResolver {
     /// * `Ok(Vec<IpAddr>)` - Resolved IP addresses
     /// * `Err(_)` - Resolution failed (NXDOMAIN, timeout, etc.)
     pub async fn resolve(&self, domain: &str) -> Result<Vec<IpAddr>> {
-        let response = self.resolver
+        let response = self
+            .resolver
             .lookup_ip(domain)
             .await
             .context(format!("DNS resolution failed for {}", domain))?;

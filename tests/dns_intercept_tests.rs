@@ -13,12 +13,15 @@
 //! - DNS query extraction
 //! - Synthetic response generation
 
-use rust_vpn::dns::intercept::{try_block_dns_query, build_udp_segment, build_ipv4_packet, IP_PROTOCOL_UDP, parse_qname, ones_complement_sum};
 use rust_vpn::dns::filter::DnsFilter;
+use rust_vpn::dns::intercept::{
+    build_ipv4_packet, build_udp_segment, ones_complement_sum, parse_qname, try_block_dns_query,
+    IP_PROTOCOL_UDP,
+};
 
 fn make_dns_query(qname: &str) -> Vec<u8> {
-    use rust_vpn::dns::intercept::{DNS_TYPE_A, DNS_CLASS_IN, DNS_PORT};
-    
+    use rust_vpn::dns::intercept::{DNS_CLASS_IN, DNS_PORT, DNS_TYPE_A};
+
     let mut dns = Vec::new();
     dns.extend_from_slice(&[0x12, 0x34]);
     dns.extend_from_slice(&[0x01, 0x00]);
@@ -34,10 +37,7 @@ fn make_dns_query(qname: &str) -> Vec<u8> {
     dns.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
     dns.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
 
-    let udp = build_udp_segment(
-        54321, DNS_PORT, &dns,
-        &[10, 8, 0, 2], &[1, 1, 1, 1],
-    );
+    let udp = build_udp_segment(54321, DNS_PORT, &dns, &[10, 8, 0, 2], &[1, 1, 1, 1]);
     build_ipv4_packet(&[10, 8, 0, 2], &[1, 1, 1, 1], IP_PROTOCOL_UDP, &udp)
 }
 
@@ -59,15 +59,12 @@ fn passes_through_non_udp_packets() {
 
 #[test]
 fn passes_through_non_dns_udp_packets() {
-    use rust_vpn::dns::intercept::{DNS_TYPE_A, DNS_CLASS_IN, DNS_PORT};
-    
+    use rust_vpn::dns::intercept::{DNS_CLASS_IN, DNS_PORT, DNS_TYPE_A};
+
     let mut filter = DnsFilter::new().unwrap();
     filter.add_blocked_domain("ads.example.com");
     let dns_like = vec![0u8; 12];
-    let udp = build_udp_segment(
-        12345, 80, &dns_like,
-        &[10, 8, 0, 2], &[1, 1, 1, 1],
-    );
+    let udp = build_udp_segment(12345, 80, &dns_like, &[10, 8, 0, 2], &[1, 1, 1, 1]);
     let pkt = build_ipv4_packet(&[10, 8, 0, 2], &[1, 1, 1, 1], IP_PROTOCOL_UDP, &udp);
     assert!(try_block_dns_query(&pkt, &filter).is_none());
 }

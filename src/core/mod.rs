@@ -12,26 +12,19 @@
 //! - Safety: Zeroized private keys, encrypted traffic, kill switch protection
 //!
 //! # Platform Notes
-//! Platform-specific packet loop implementations:
-//! - Linux/Unix: File descriptor-based TUN I/O
-//! - Windows: WinTun session API (no file descriptors)
+//! Linux-only: file-descriptor-based TUN I/O.
 //!
 //! # Non-goals
 //! This module does not implement TUN device creation (delegated to platform).
 //! It does not implement DNS filtering (delegated to dns module).
 //! It does not implement GUI rendering (delegated to gui module).
 
-pub mod tunnel;
 pub mod killswitch;
 pub mod reconnect;
+pub mod tunnel;
 
-// The packet loop is platform-split: the Linux/Unix implementation works
-// on raw file descriptors, while the Windows implementation drives the
-// WinTun session API (no file descriptor exists on Windows).
+// The Linux/Unix packet loop works on raw file descriptors.
 #[cfg(unix)]
 pub mod packet_loop;
-
-#[cfg(target_os = "windows")]
-pub mod packet_loop_windows;
 
 pub mod controller;

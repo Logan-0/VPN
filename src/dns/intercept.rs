@@ -23,11 +23,11 @@
 use crate::dns::filter::DnsFilter;
 
 /// DNS protocol constants
-pub const DNS_TYPE_A: u16 = 1;       // Type A: IPv4 address
-pub const DNS_TYPE_AAAA: u16 = 28;   // Type AAAA: IPv6 address
-pub const DNS_CLASS_IN: u16 = 1;     // Class IN: Internet
-pub const DNS_PORT: u16 = 53;        // Standard DNS port
-pub const IP_PROTOCOL_UDP: u8 = 17;  // UDP protocol number
+pub const DNS_TYPE_A: u16 = 1; // Type A: IPv4 address
+pub const DNS_TYPE_AAAA: u16 = 28; // Type AAAA: IPv6 address
+pub const DNS_CLASS_IN: u16 = 1; // Class IN: Internet
+pub const DNS_PORT: u16 = 53; // Standard DNS port
+pub const IP_PROTOCOL_UDP: u8 = 17; // UDP protocol number
 
 /// TTL we attach to synthesised block responses, in seconds.
 ///
@@ -134,10 +134,7 @@ pub fn try_block_dns_query(packet: &[u8], filter: &DnsFilter) -> InterceptResult
         return None;
     }
     let qtype = u16::from_be_bytes([dns[after_name_offset], dns[after_name_offset + 1]]);
-    let qclass = u16::from_be_bytes([
-        dns[after_name_offset + 2],
-        dns[after_name_offset + 3],
-    ]);
+    let qclass = u16::from_be_bytes([dns[after_name_offset + 2], dns[after_name_offset + 3]]);
     // Only block A/AAAA queries in the IN class -- other types (TXT, MX,
     // SRV, etc.) are rare and blocking them risks breaking applications
     // that legitimately query for them.
@@ -189,7 +186,9 @@ pub fn try_block_dns_query(packet: &[u8], filter: &DnsFilter) -> InterceptResult
 /// Following them here would also enable a denial-of-service vector
 /// (pointer loops) so we explicitly reject them.
 pub fn parse_qname(dns: &[u8], mut offset: usize) -> Option<(String, usize)> {
-    let mut name = String::new();
+    // Reserve the qname's worst-case length up front so growing it label by
+    // label below doesn't reallocate a few times per DNS query.
+    let mut name = String::with_capacity(dns.len().saturating_sub(offset));
     loop {
         if offset >= dns.len() {
             return None;
@@ -322,7 +321,7 @@ pub fn build_ipv4_packet(
     let total_len = (20 + payload.len()) as u16;
     let mut hdr = [0u8; 20];
     hdr[0] = 0x45; // Version=4, IHL=5
-    hdr[1] = 0;    // DSCP/ECN: best effort
+    hdr[1] = 0; // DSCP/ECN: best effort
     hdr[2..4].copy_from_slice(&total_len.to_be_bytes());
     hdr[4..6].copy_from_slice(&[0, 0]); // identification
     hdr[6..8].copy_from_slice(&[0x40, 0]); // flags=DF, fragment offset=0

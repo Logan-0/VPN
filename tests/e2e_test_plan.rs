@@ -74,8 +74,13 @@ fn e2e_tun_device_create_and_cleanup() {
         .expect("Failed to create TUN device");
 
     // Verify device name was assigned
-    let dev_name = platform.tun_device_name().expect("Should have a device name");
-    assert!(dev_name.starts_with("tun"), "Device name should start with 'tun'");
+    let dev_name = platform
+        .tun_device_name()
+        .expect("Should have a device name");
+    assert!(
+        dev_name.starts_with("tun"),
+        "Device name should start with 'tun'"
+    );
 
     // Cleanup
     platform.cleanup().unwrap();
@@ -102,7 +107,10 @@ fn e2e_dns_filter_full_flow() {
 
     // 4. Switch to Pi-hole mode
     filter.set_mode(DnsFilterMode::ExternalDns("192.168.1.53".parse().unwrap()));
-    assert!(!filter.is_blocked("doubleclick.net"), "Pi-hole mode should defer");
+    assert!(
+        !filter.is_blocked("doubleclick.net"),
+        "Pi-hole mode should defer"
+    );
 
     // 5. Switch back
     filter.set_mode(DnsFilterMode::BuiltIn);
@@ -118,7 +126,10 @@ fn e2e_dns_filter_full_flow() {
 async fn e2e_dns_resolver_cloudflare_doh() {
     let resolver = DnsResolver::new().unwrap();
     let addrs = resolver.resolve("example.com").await.unwrap();
-    assert!(!addrs.is_empty(), "Should resolve example.com to at least one IP");
+    assert!(
+        !addrs.is_empty(),
+        "Should resolve example.com to at least one IP"
+    );
 }
 
 // ============================================================================
@@ -129,8 +140,8 @@ async fn e2e_dns_resolver_cloudflare_doh() {
 #[ignore]
 async fn e2e_dns_resolver_custom_pihole() {
     // Set TEST_PIHOLE_IP=192.168.1.53 to run this test
-    let pihole_ip = std::env::var("TEST_PIHOLE_IP")
-        .expect("Set TEST_PIHOLE_IP env var to run this test");
+    let pihole_ip =
+        std::env::var("TEST_PIHOLE_IP").expect("Set TEST_PIHOLE_IP env var to run this test");
 
     let resolver = DnsResolver::custom(pihole_ip.parse().unwrap()).unwrap();
     let addrs = resolver.resolve("example.com").await.unwrap();
@@ -151,9 +162,18 @@ fn e2e_config_round_trip() {
     let toml_str = toml::to_string_pretty(&config).unwrap();
     let restored: VpnConfig = toml::from_str(&toml_str).unwrap();
 
-    assert_eq!(restored.selected_vpn_server_identifier, config.selected_vpn_server_identifier);
-    assert_eq!(restored.custom_dns_server_address, config.custom_dns_server_address);
-    assert_eq!(restored.kill_switch_protection_enabled, config.kill_switch_protection_enabled);
+    assert_eq!(
+        restored.selected_vpn_server_identifier,
+        config.selected_vpn_server_identifier
+    );
+    assert_eq!(
+        restored.custom_dns_server_address,
+        config.custom_dns_server_address
+    );
+    assert_eq!(
+        restored.kill_switch_protection_enabled,
+        config.kill_switch_protection_enabled
+    );
 }
 
 // ============================================================================

@@ -17,8 +17,7 @@
 //! - Tunnel state management
 
 use rust_vpn::core::tunnel::{
-    generate_keypair, base64_to_key, key_to_base64,
-    Tunnel, TunnelConfig, TunnelState,
+    base64_to_key, generate_keypair, key_to_base64, Tunnel, TunnelConfig, TunnelState,
 };
 use std::net::{IpAddr, SocketAddr};
 use zeroize::Zeroizing;
@@ -51,7 +50,10 @@ fn test_generate_keypair_produces_32_byte_keys() {
 fn test_generate_keypair_produces_different_keys() {
     let (priv1, pub1) = generate_keypair();
     let (priv2, pub2) = generate_keypair();
-    assert_ne!(priv1, priv2, "Two keypairs should have different private keys");
+    assert_ne!(
+        priv1, priv2,
+        "Two keypairs should have different private keys"
+    );
     assert_ne!(pub1, pub2, "Two keypairs should have different public keys");
 }
 
@@ -78,7 +80,7 @@ fn test_base64_to_key_invalid_base64() {
 #[test]
 fn test_base64_to_key_wrong_length() {
     // Valid base64 but only 16 bytes -- should fail because keys must be 32 bytes
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
     let short = general_purpose::STANDARD.encode([0u8; 16]);
     let result = base64_to_key(&short);
     assert!(result.is_err());

@@ -13,8 +13,8 @@
 //! - Configuration serialization
 //! - Key validation logic
 
-use rust_vpn::config::VpnConfig;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rust_vpn::config::VpnConfig;
 
 fn config_with_b64_key(b64: &str) -> VpnConfig {
     VpnConfig {
@@ -112,7 +112,10 @@ fn test_round_trip_preserves_key() {
     let cfg = config_with_b64_key(&b64);
     let toml = toml::to_string_pretty(&cfg).unwrap();
     let loaded: VpnConfig = toml::from_str(&toml).unwrap();
-    assert_eq!(loaded.client_private_key_base64.as_deref(), Some(b64.as_str()));
+    assert_eq!(
+        loaded.client_private_key_base64.as_deref(),
+        Some(b64.as_str())
+    );
 }
 
 #[test]

@@ -32,7 +32,8 @@ use rust_vpn::core::killswitch::{KillSwitch, KillSwitchState};
 /// gates on.
 #[test]
 fn new_kill_switch_starts_disabled() {
-    let kill_switch = KillSwitch::new().expect("KillSwitch::new() does not perform I/O and cannot fail");
+    let kill_switch =
+        KillSwitch::new().expect("KillSwitch::new() does not perform I/O and cannot fail");
 
     assert_eq!(kill_switch.get_state(), KillSwitchState::Disabled);
     assert!(!kill_switch.is_enabled());

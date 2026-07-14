@@ -75,7 +75,7 @@ struct GitHubRelease {
 /// This is a background task that runs independently of VPN networking.
 pub struct UpdateChecker {
     /// The current version of the VPN application
-    /// 
+    ///
     /// Stored as a string in semantic versioning format (e.g., "0.1.0").
     /// This is compared against the latest version from GitHub to determine
     /// if an update is available.
@@ -84,22 +84,22 @@ pub struct UpdateChecker {
 
 impl UpdateChecker {
     /// Creates a new update checker
-    /// 
+    ///
     /// Initializes the checker with the current application version.
     /// This version will be compared against the latest release from GitHub.
-    /// 
+    ///
     /// ## Networking Context
-    /// 
+    ///
     /// The update checker is created during application initialization.
     /// It does not perform any network operations until `check_for_updates()`
     /// is called.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `version` - Current application version string (e.g., "0.1.0")
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// New UpdateChecker instance
     pub fn new(version: String) -> Self {
         Self {
@@ -108,33 +108,33 @@ impl UpdateChecker {
     }
 
     /// Returns the current application version
-    /// 
+    ///
     /// Provides access to the version string for display or comparison purposes.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Reference to the current version string
     pub fn current_version(&self) -> &str {
         &self.current_application_version_string
     }
 
     /// Checks for available updates from GitHub releases
-    /// 
+    ///
     /// Makes an HTTP request to the GitHub API to fetch the latest release
     /// information, then compares it with the current version.
-    /// 
+    ///
     /// ## Networking Details
-    /// 
+    ///
     /// This method performs:
     /// 1. HTTP GET request to GitHub releases API
     /// 2. JSON response parsing
     /// 3. Version string comparison
     /// 4. Returns latest version if newer than current
-    /// 
+    ///
     /// ### GitHub API Endpoint
-    /// 
+    ///
     /// `https://api.github.com/repos/Logan-0/VPN/releases/latest`
-    /// 
+    ///
     /// Response format (simplified):
     /// ```json
     /// {
@@ -144,16 +144,16 @@ impl UpdateChecker {
     ///   "html_url": "https://github.com/Logan-0/VPN/releases/tag/v0.2.0"
     /// }
     /// ```
-    /// 
+    ///
     /// ### Version Comparison
-    /// 
+    ///
     /// Uses semantic versioning comparison:
     /// - Extract version numbers (MAJOR.MINOR.PATCH)
     /// - Compare each component numerically
     /// - Return latest if any component is greater
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// * `Ok(Some(version))` - Latest version string if update available
     /// * `Ok(None)` - No update available
     /// * `Err(_)` - Network error or API failure
@@ -181,16 +181,27 @@ impl UpdateChecker {
 
         // Parse JSON response
         let release: GitHubRelease = response.json().await?;
-        
+
         // Extract version from tag_name (remove 'v' prefix if present)
-        let latest_version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-        
+        let latest_version = release
+            .tag_name
+            .strip_prefix('v')
+            .unwrap_or(&release.tag_name);
+
         // Compare versions
         if Self::is_newer_version(&self.current_application_version_string, latest_version) {
-            tracing::info!("New version available: {} (current: {})", latest_version, self.current_application_version_string);
+            tracing::info!(
+                "New version available: {} (current: {})",
+                latest_version,
+                self.current_application_version_string
+            );
             Ok(Some(latest_version.to_string()))
         } else {
-            tracing::debug!("No update available (current: {}, latest: {})", self.current_application_version_string, latest_version);
+            tracing::debug!(
+                "No update available (current: {}, latest: {})",
+                self.current_application_version_string,
+                latest_version
+            );
             Ok(None)
         }
     }
@@ -200,7 +211,7 @@ impl UpdateChecker {
     pub fn is_newer_version(version_a: &str, version_b: &str) -> bool {
         let parts_a = parse_version(version_a);
         let parts_b = parse_version(version_b);
-        
+
         // Compare each component
         for (a, b) in parts_a.iter().zip(parts_b.iter()) {
             if b > a {
@@ -209,7 +220,7 @@ impl UpdateChecker {
                 return false;
             }
         }
-        
+
         // If all compared components are equal, the longer version is newer
         parts_b.len() > parts_a.len()
     }
@@ -217,8 +228,5 @@ impl UpdateChecker {
 
 // Parses a version string into numeric components
 fn parse_version(version: &str) -> Vec<u64> {
-    version
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect()
+    version.split('.').filter_map(|s| s.parse().ok()).collect()
 }

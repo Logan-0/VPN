@@ -21,7 +21,7 @@
 
 use anyhow::Result;
 use std::time::Duration;
-use tokio::time::{sleep, Instant};
+use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 /// Initial backoff duration for first reconnection attempt
@@ -33,28 +33,6 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Multiplier for exponential backoff (doubles each time)
 const BACKOFF_MULTIPLIER: u32 = 2;
 
-/// How often to run health checks on active connections
-const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(30);
-
-
-/// Reason for initiating a reconnection attempt.
-///
-/// This helps with logging and debugging connection issues.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReconnectReason {
-    /// Connection was lost unexpectedly (network change, timeout, etc.)
-    ConnectionLost,
-    
-    /// Health check detected the connection isn't working
-    HealthCheckFailed,
-    
-    /// Cannot reach the VPN server
-    ServerUnreachable,
-    
-    /// User manually requested reconnection
-    UserRequested,
-}
-
 /// Manages automatic reconnection with exponential backoff.
 ///
 /// Tracks connection attempts, failures, and timing to implement
@@ -62,13 +40,13 @@ pub enum ReconnectReason {
 pub struct ReconnectManager {
     /// Current backoff duration (increases with each failure)
     current_backoff: Duration,
-    
+
     /// Number of consecutive failed connection attempts
     consecutive_failures: u32,
-    
+
     /// When the last connection attempt was made
     last_connection_attempt: Option<Instant>,
-    
+
     /// When the last successful connection was established
     last_successful_connection: Option<Instant>,
 }
@@ -89,43 +67,6 @@ impl ReconnectManager {
         })
     }
 
-    /// Waits for the appropriate backoff duration before attempting reconnection.
-    ///
-    /// On the first attempt, this returns immediately. On subsequent attempts,
-    /// it waits for the current backoff duration (which increases exponentially).
-    ///
-    /// # Arguments
-    /// * `reason` - Why we're reconnecting (for logging)
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // First attempt - no wait
-    /// manager.wait_before_reconnect(ReconnectReason::ConnectionLost).await;
-    /// // Try to connect...
-    /// manager.record_failure();
-    ///
-    /// // Second attempt - waits 1 second
-    /// manager.wait_before_reconnect(ReconnectReason::ConnectionLost).await;
-    /// // Try to connect...
-    /// manager.record_failure();
-    ///
-    /// // Third attempt - waits 2 seconds
-    /// manager.wait_before_reconnect(ReconnectReason::ConnectionLost).await;
-    /// ```
-    pub async fn wait_before_reconnect(&mut self, reason: ReconnectReason) {
-        info!("Waiting before reconnect attempt (reason: {:?})", reason);
-        
-        if self.consecutive_failures > 0 {
-            debug!(
-                "Backing off for {:?} (attempt {})",
-                self.current_backoff, self.consecutive_failures + 1
-            );
-            sleep(self.current_backoff).await;
-        }
-        
-        self.last_connection_attempt = Some(Instant::now());
-    }
-
     /// Records a failed connection attempt.
     ///
     /// This:
@@ -136,15 +77,13 @@ impl ReconnectManager {
     /// Call this after each failed connection attempt.
     pub fn record_failure(&mut self) {
         self.consecutive_failures += 1;
-        
+
         // Double the backoff, but cap at MAX_BACKOFF (30 seconds)
         self.current_backoff = std::cmp::min(
-            Duration::from_secs(
-                self.current_backoff.as_secs() * BACKOFF_MULTIPLIER as u64
-            ),
+            Duration::from_secs(self.current_backoff.as_secs() * BACKOFF_MULTIPLIER as u64),
             MAX_BACKOFF,
         );
-        
+
         warn!(
             "Connection attempt failed (failures: {}, next backoff: {:?})",
             self.consecutive_failures, self.current_backoff
@@ -167,7 +106,7 @@ impl ReconnectManager {
                 self.consecutive_failures
             );
         }
-        
+
         // Reset everything back to initial state
         self.consecutive_failures = 0;
         self.current_backoff = INITIAL_BACKOFF;
@@ -226,81 +165,5 @@ impl ReconnectManager {
 impl Default for ReconnectManager {
     fn default() -> Self {
         Self::new().expect("Failed to create ReconnectManager")
-    }
-}
-
-/// Runs a periodic health check loop for an active VPN connection.
-///
-/// This function runs continuously in the background, checking the connection
-/// health every 30 seconds. If a health check fails, it logs a warning (the
-/// caller should monitor for these and trigger reconnection).
-///
-/// # How Health Checks Work
-///
-/// ```text
-/// [Start] ──► Wait 30s ──► Run Check ──► Healthy? ──┐
-///              ▲                           │        │
-///              │                           │        │
-///              └───────────────────────────┘        │
-///                      (loop continues)             │
-///                                                    │
-///                                                    ▼
-///                                              Not Healthy
-///                                                    │
-///                                                    ▼
-///                                            Log Warning
-///                                         (Caller triggers
-///                                          reconnection)
-/// ```
-///
-/// # Arguments
-/// * `check_fn` - Async function that returns `true` if healthy, `false` if not
-/// * `should_stop` - Watch channel to signal when to stop the loop
-///
-/// # Example
-/// ```rust,ignore
-/// let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-///
-/// tokio::spawn(async move {
-///     health_check_loop(
-///         || async {
-///             // Ping the server or check if packets are flowing
-///             tunnel.is_connected()
-///         },
-///         stop_rx,
-///     ).await;
-/// });
-///
-/// // Later, to stop:
-/// stop_tx.send(true)?;
-/// ```
-
-pub async fn health_check_loop<F, Fut>(
-    mut check_fn: F,
-    mut should_stop: tokio::sync::watch::Receiver<bool>,
-) where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    info!("Starting health check loop");
-    
-    loop {
-        tokio::select! {
-            _ = sleep(HEALTH_CHECK_INTERVAL) => {
-                debug!("Running health check");
-                
-                let is_healthy = check_fn().await;
-                
-                if !is_healthy {
-                    warn!("Health check failed");
-                }
-            }
-            _ = should_stop.changed() => {
-                if *should_stop.borrow() {
-                    info!("Stopping health check loop");
-                    break;
-                }
-            }
-        }
     }
 }

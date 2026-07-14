@@ -13,10 +13,10 @@
 //! - Configuration validation
 //! - State transitions
 
-use rust_vpn::core::tunnel::{Tunnel, TunnelConfig, TunnelState};
-use rust_vpn::core::tunnel::generate_keypair;
 use rust_vpn::core::tunnel::base64_to_key;
+use rust_vpn::core::tunnel::generate_keypair;
 use rust_vpn::core::tunnel::key_to_base64;
+use rust_vpn::core::tunnel::{Tunnel, TunnelConfig, TunnelState};
 use zeroize::Zeroizing;
 
 fn dummy_config() -> TunnelConfig {
@@ -46,13 +46,19 @@ fn test_generate_keypair_public_key_is_32_bytes() {
 fn test_generate_keypair_produces_different_keys_each_call() {
     let (priv1, _) = generate_keypair();
     let (priv2, _) = generate_keypair();
-    assert_ne!(priv1, priv2, "Two consecutive keypairs should not be identical");
+    assert_ne!(
+        priv1, priv2,
+        "Two consecutive keypairs should not be identical"
+    );
 }
 
 #[test]
 fn test_generate_keypair_private_and_public_differ() {
     let (priv_key, pub_key) = generate_keypair();
-    assert_ne!(priv_key, pub_key, "Private key must not equal derived public key");
+    assert_ne!(
+        priv_key, pub_key,
+        "Private key must not equal derived public key"
+    );
 }
 
 #[test]

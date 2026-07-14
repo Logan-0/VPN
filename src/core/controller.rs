@@ -11,10 +11,7 @@
 //! - Safety: Thread-safe channel communication; zeroized private keys in memory
 //!
 //! # Platform Notes
-//! Platform-specific TUN device handling via conditional compilation:
-//! - Linux: Uses raw fd with ioctl-based TUN device
-//! - Windows: Uses WinTun session handles
-//! - macOS: Not yet implemented
+//! Linux-only: uses a raw fd with an ioctl-based TUN device.
 //!
 //! # Non-goals
 //! This module does not implement packet processing (delegated to packet_loop).
@@ -182,8 +179,8 @@ impl VpnController {
     /// Takes ownership of the event receiver.
     ///
     /// This must be called exactly once during initialization. The returned
-    /// `Receiver` is given to the Iced `Subscription` which polls it for
-    /// [`VpnEvent`] messages and forwards them as [`super::super::gui::app::Message::CoreEvent`].
+    /// `Receiver` is drained by the GUI on each `Message::Tick`, which applies
+    /// the [`VpnEvent`] messages to the GUI state.
     ///
     /// # Panics
     ///
@@ -199,6 +196,33 @@ impl VpnController {
                 as *mut Option<mpsc::Receiver<VpnEvent>>;
             (*ptr).take().expect("event_rx already taken")
         }
+    }
+
+    /// Emit a Connect-failure: an `Error` event paired with the
+    /// `StateChanged(Error)` transition. Centralizes the "signal error + flip
+    /// to Error state" invariant that every Connect failure branch shares, so
+    /// the two sends can't drift apart at a call site.
+    fn emit_error(event_tx: &mpsc::Sender<VpnEvent>, message: String) {
+        let _ = event_tx.send(VpnEvent::Error(message));
+        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+    }
+
+    /// Wait `delay`, then re-enqueue a `Connect` on the command channel so
+    /// `run_worker` handles the auto-reconnect exactly like a user-initiated
+    /// connect. Shared by both retry paths (handshake failure and unexpected
+    /// packet-loop exit) so the backoff-then-re-Connect contract lives in one
+    /// place. Caller supplies the backoff so the reconnect ladder is unchanged.
+    async fn resend_connect_after(
+        cmd_tx: tokio::sync::mpsc::UnboundedSender<VpnCommand>,
+        server_endpoint: String,
+        server_public_key_base64: String,
+        delay: std::time::Duration,
+    ) {
+        tokio::time::sleep(delay).await;
+        let _ = cmd_tx.send(VpnCommand::Connect {
+            server_endpoint,
+            server_public_key_base64,
+        });
     }
 
     /// The async worker loop that processes commands.
@@ -257,8 +281,14 @@ impl VpnController {
                 Ok(a) => {
                     tracing::info!(
                         "Client TUN address: {}.{}.{}.{}/{}.{}.{}.{}",
-                        a.0 .0, a.0 .1, a.0 .2, a.0 .3,
-                        a.1 .0, a.1 .1, a.1 .2, a.1 .3
+                        a.0 .0,
+                        a.0 .1,
+                        a.0 .2,
+                        a.0 .3,
+                        a.1 .0,
+                        a.1 .1,
+                        a.1 .2,
+                        a.1 .3
                     );
                     Some(a)
                 }
@@ -319,9 +349,9 @@ impl VpnController {
         //   Dropping it removes routing rules and closes the original TUN fd.
         //   The packet loop keeps the device alive via its own dup'd fd until
         //   the stop signal propagates.
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         let mut stop_tx: Option<watch::Sender<bool>> = None;
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         let mut active_platform: Option<Platform> = None;
 
         loop {
@@ -336,30 +366,38 @@ impl VpnController {
             };
 
             match cmd {
-                VpnCommand::Connect { server_endpoint, server_public_key_base64 } => {
+                VpnCommand::Connect {
+                    server_endpoint,
+                    server_public_key_base64,
+                } => {
                     // Abort any running session before starting a new one.
                     // Handles rapid Connect→Connect without an intervening Disconnect.
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    #[cfg(target_os = "linux")]
                     {
-                        if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
-                        if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }
+                        if let Some(tx) = stop_tx.take() {
+                            let _ = tx.send(true);
+                        }
+                        if let Some(mut p) = active_platform.take() {
+                            let _ = p.cleanup();
+                        }
                     }
 
                     tracing::info!("Worker: Connect to {}", server_endpoint);
                     let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Connecting));
-                    let _ = event_tx.send(VpnEvent::Info(
-                        format!("Connecting to {}...", server_endpoint),
-                    ));
+                    let _ = event_tx.send(VpnEvent::Info(format!(
+                        "Connecting to {}...",
+                        server_endpoint
+                    )));
 
                     // --- Parse server endpoint ---
                     // Needed for both kill switch (IP) and tunnel config (SocketAddr).
                     let server_addr: std::net::SocketAddr = match server_endpoint.parse() {
                         Ok(a) => a,
                         Err(e) => {
-                            let _ = event_tx.send(VpnEvent::Error(
+                            Self::emit_error(
+                                &event_tx,
                                 format!("Invalid server endpoint '{}': {}", server_endpoint, e),
-                            ));
-                            let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                            );
                             continue;
                         }
                     };
@@ -378,14 +416,14 @@ impl VpnController {
                         if let Some(ks) = kill_switch.as_mut() {
                             if let Err(e) = ks.enable(server_addr.ip(), "tun0") {
                                 tracing::error!("Kill switch enable failed: {}", e);
-                                let _ = event_tx.send(VpnEvent::Error(
+                                Self::emit_error(
+                                    &event_tx,
                                     format!(
                                         "Kill switch error: {} — refusing to connect without \
                                          the requested protection",
                                         e
                                     ),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                );
                                 continue;
                             }
                         }
@@ -404,17 +442,17 @@ impl VpnController {
                     //   6. Wrap Tunnel in Arc<Mutex> for shared mutable access
                     //   7. Spawn run_packet_loop as a concurrent Tokio task
                     //   8. Record success and notify the GUI
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    #[cfg(target_os = "linux")]
                     {
                         // Step 1
                         let private_key = match client_private_key.as_ref() {
                             Some(k) => k.clone(),
                             None => {
-                                let _ = event_tx.send(VpnEvent::Error(
+                                Self::emit_error(
+                                    &event_tx,
                                     "No private key (see startup log for generation failure)"
                                         .to_string(),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                );
                                 continue;
                             }
                         };
@@ -425,10 +463,10 @@ impl VpnController {
                         let server_pub_key = match base64_to_key(&server_public_key_base64) {
                             Ok(k) => k,
                             Err(e) => {
-                                let _ = event_tx.send(VpnEvent::Error(
+                                Self::emit_error(
+                                    &event_tx,
                                     format!("Invalid server public key: {}", e),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                );
                                 continue;
                             }
                         };
@@ -439,10 +477,7 @@ impl VpnController {
                         let mut platform = match Platform::new() {
                             Ok(p) => p,
                             Err(e) => {
-                                let _ = event_tx.send(VpnEvent::Error(
-                                    format!("Platform init failed: {}", e),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                Self::emit_error(&event_tx, format!("Platform init failed: {}", e));
                                 continue;
                             }
                         };
@@ -456,22 +491,18 @@ impl VpnController {
                         let (tun_ip_octets, tun_mask_octets) = match client_tun_addr {
                             Some(a) => a,
                             None => {
-                                let _ = event_tx.send(VpnEvent::Error(
+                                Self::emit_error(
+                                    &event_tx,
                                     "Invalid client_tun_ip_cidr in config (see startup log)"
                                         .to_string(),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                );
                                 continue;
                             }
                         };
 
-                        // Adapt the platform-specific create_tun result into
-                        // the common `TunHandle` type. On Linux that is the
-                        // raw fd of the TUN device; on Windows it is the
-                        // WinTun session. Each cfg branch is straight-line
-                        // code so error handling stays uniform.
+                        // Create the TUN device and take its raw fd as the
+                        // `TunHandle` the packet loop dups.
                         let tun_handle: TunHandle = {
-                            #[cfg(target_os = "linux")]
                             {
                                 use std::os::unix::io::AsRawFd;
                                 match platform.create_tun(
@@ -481,27 +512,10 @@ impl VpnController {
                                 ) {
                                     Ok(dev) => dev.as_raw_fd(),
                                     Err(e) => {
-                                        let _ = event_tx.send(VpnEvent::Error(
+                                        Self::emit_error(
+                                            &event_tx,
                                             format!("TUN device creation failed: {}", e),
-                                        ));
-                                        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
-                                        continue;
-                                    }
-                                }
-                            }
-                            #[cfg(target_os = "windows")]
-                            {
-                                match platform.create_tun(
-                                    tun_ip_octets,
-                                    tun_mask_octets,
-                                    server_addr.ip(),
-                                ) {
-                                    Ok(session) => session,
-                                    Err(e) => {
-                                        let _ = event_tx.send(VpnEvent::Error(
-                                            format!("TUN device creation failed: {}", e),
-                                        ));
-                                        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                        );
                                         continue;
                                     }
                                 }
@@ -522,10 +536,10 @@ impl VpnController {
                         let mut tunnel_instance = match Tunnel::new(tunnel_config) {
                             Ok(t) => t,
                             Err(e) => {
-                                let _ = event_tx.send(VpnEvent::Error(
+                                Self::emit_error(
+                                    &event_tx,
                                     format!("Tunnel creation failed: {}", e),
-                                ));
-                                let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                                );
                                 continue;
                             }
                         };
@@ -535,10 +549,10 @@ impl VpnController {
                             // Snapshot the new (doubled) backoff AFTER recording
                             // the failure so the retry delay is correct.
                             let retry_backoff = reconnect_manager.get_current_backoff();
-                            let _ = event_tx.send(VpnEvent::Error(
+                            Self::emit_error(
+                                &event_tx,
                                 format!("WireGuard handshake failed: {}", e),
-                            ));
-                            let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                            );
 
                             // If auto-reconnect is on, schedule a retry after the
                             // exponential backoff delay. The retry re-enqueues a
@@ -555,11 +569,7 @@ impl VpnController {
                                         "Auto-reconnect: waiting {:?} before retry",
                                         retry_backoff
                                     );
-                                    tokio::time::sleep(retry_backoff).await;
-                                    let _ = cmd_tx.send(VpnCommand::Connect {
-                                        server_endpoint: ep,
-                                        server_public_key_base64: pk,
-                                    });
+                                    Self::resend_connect_after(cmd_tx, ep, pk, retry_backoff).await;
                                 });
                             }
                             continue;
@@ -621,16 +631,18 @@ impl VpnController {
                                         "Connection lost, auto-reconnecting in {:?}...",
                                         first_reconnect_backoff
                                     )));
-                                    tokio::time::sleep(first_reconnect_backoff).await;
-                                    // Re-enqueue Connect through the command channel.
-                                    // run_worker handles it like a user-initiated connect:
-                                    // on failure it calls record_failure() and if
-                                    // auto_reconnect_enabled spawns another retry,
-                                    // driving the full exponential backoff ladder.
-                                    let _ = command_tx_loop.send(VpnCommand::Connect {
-                                        server_endpoint: server_endpoint_loop,
-                                        server_public_key_base64: server_pub_key_loop,
-                                    });
+                                    // Re-enqueue Connect through the command channel after
+                                    // the backoff. run_worker handles it like a user-initiated
+                                    // connect: on failure it calls record_failure() and, if
+                                    // auto_reconnect_enabled, spawns another retry — driving the
+                                    // full exponential backoff ladder.
+                                    Self::resend_connect_after(
+                                        command_tx_loop,
+                                        server_endpoint_loop,
+                                        server_pub_key_loop,
+                                        first_reconnect_backoff,
+                                    )
+                                    .await;
                                 } else {
                                     let _ = event_tx_loop
                                         .send(VpnEvent::StateChanged(VpnState::Disconnected));
@@ -643,18 +655,8 @@ impl VpnController {
                         // tunnel_arc lives inside the spawned closure
 
                         let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Connected));
-                        let _ = event_tx.send(VpnEvent::Info(
-                            format!("Connected to {}", server_endpoint),
-                        ));
-                    }
-
-                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                    {
-                        let _ = event_tx.send(VpnEvent::Error(
-                            "Tunnel bring-up is not implemented on this platform"
-                                .to_string(),
-                        ));
-                        let _ = event_tx.send(VpnEvent::StateChanged(VpnState::Error));
+                        let _ = event_tx
+                            .send(VpnEvent::Info(format!("Connected to {}", server_endpoint)));
                     }
                 }
                 VpnCommand::Disconnect => {
@@ -663,10 +665,14 @@ impl VpnController {
                     // Stop the packet loop before removing the TUN device.
                     // The stop signal gives the loop a chance to flush in-flight
                     // packets; then cleanup removes routes and drops the fd.
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    #[cfg(target_os = "linux")]
                     {
-                        if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
-                        if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }
+                        if let Some(tx) = stop_tx.take() {
+                            let _ = tx.send(true);
+                        }
+                        if let Some(mut p) = active_platform.take() {
+                            let _ = p.cleanup();
+                        }
                     }
 
                     // Disable kill switch BEFORE clearing last_server_ip.
@@ -685,7 +691,10 @@ impl VpnController {
                     let _ = event_tx.send(VpnEvent::Info("Disconnected".to_string()));
                 }
                 VpnCommand::SetKillSwitch(enabled) => {
-                    tracing::info!("Worker: Kill switch {}", if enabled { "enabled" } else { "disabled" });
+                    tracing::info!(
+                        "Worker: Kill switch {}",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
                     kill_switch_enabled = enabled;
                     if let Some(ks) = kill_switch.as_mut() {
                         if enabled {
@@ -703,12 +712,10 @@ impl VpnController {
                                     // about protection state — no firewall rule
                                     // actually exists, so the flag must say so too.
                                     kill_switch_enabled = false;
-                                    let _ = event_tx.send(VpnEvent::Error(
-                                        format!(
-                                            "Kill switch error: {} — protection is NOT active",
-                                            e
-                                        ),
-                                    ));
+                                    let _ = event_tx.send(VpnEvent::Error(format!(
+                                        "Kill switch error: {} — protection is NOT active",
+                                        e
+                                    )));
                                 }
                             }
                         } else if let Err(e) = ks.disable() {
@@ -717,7 +724,10 @@ impl VpnController {
                     }
                 }
                 VpnCommand::SetAutoReconnect(enabled) => {
-                    tracing::info!("Worker: Auto-reconnect {}", if enabled { "enabled" } else { "disabled" });
+                    tracing::info!(
+                        "Worker: Auto-reconnect {}",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
                     auto_reconnect_enabled = enabled;
                     if !enabled {
                         // Clear accumulated failure/backoff history. If the user
@@ -732,10 +742,14 @@ impl VpnController {
 
                     // Tear down the packet loop and TUN device, same sequence
                     // as Disconnect (but no state-change event since we're exiting).
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    #[cfg(target_os = "linux")]
                     {
-                        if let Some(tx) = stop_tx.take() { let _ = tx.send(true); }
-                        if let Some(mut p) = active_platform.take() { let _ = p.cleanup(); }
+                        if let Some(tx) = stop_tx.take() {
+                            let _ = tx.send(true);
+                        }
+                        if let Some(mut p) = active_platform.take() {
+                            let _ = p.cleanup();
+                        }
                     }
 
                     // Always disable the kill switch on shutdown, even if the

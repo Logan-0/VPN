@@ -13,18 +13,16 @@
 //!
 //! # Platform Notes
 //! Linux-specific implementation using raw file descriptors and ioctl.
-//! Windows uses a separate packet_loop_windows module with WinTun sessions.
 //!
 //! # Non-goals
 //! This module does not implement encryption/decryption (delegated to tunnel module).
 //! It does not implement DNS filtering logic (delegated to dns filter module).
 //! It does not handle connection state management (delegated to controller).
 
+use nix::libc;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use nix::libc;
 use tokio::net::UdpSocket;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
@@ -41,12 +39,6 @@ const WIREGUARD_OVERHEAD: usize = 32;
 
 /// Keepalive interval in seconds (matches WireGuard default)
 const KEEPALIVE_INTERVAL_SECS: u64 = 25;
-
-/// Default batch size for UDP packet batching
-const DEFAULT_BATCH_SIZE: usize = 10;
-
-/// Default batch timeout in milliseconds
-const DEFAULT_BATCH_TIMEOUT_MS: u64 = 5;
 
 /// Result of running the packet loop -- tells the caller why it stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +103,14 @@ pub async fn run_packet_loop(
     // Channel for TUN reads (synchronous fd -> async world)
     let (tun_tx, mut tun_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
+    // Buffer free-list: the async loop returns each processed TUN buffer here so
+    // the blocking reader reuses it instead of `buf[..n].to_vec()`-copying into
+    // a fresh Vec on every outbound packet. On an empty pool the reader falls
+    // back to a fresh allocation, so a missed return only costs one allocation
+    // (never correctness). The `tun_tx` channel(64) bound keeps the number of
+    // buffers in circulation — and thus the pool's memory — small.
+    let (recycle_tx, recycle_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+
     // Spawn a blocking thread to continuously read from the TUN fd
     let tun_read_stop = stop_rx.clone();
     tokio::task::spawn_blocking(move || {
@@ -122,7 +122,14 @@ pub async fn run_packet_loop(
             return;
         }
         let mut file = unsafe { std::fs::File::from_raw_fd(dup_fd) };
-        let mut buf = vec![0u8; TUN_MTU];
+
+        // Take a buffer from the pool (or allocate) and size it for a full read.
+        let take_buf = |recycle_rx: &std::sync::mpsc::Receiver<Vec<u8>>| {
+            let mut buf = recycle_rx.try_recv().unwrap_or_else(|_| vec![0u8; TUN_MTU]);
+            buf.resize(TUN_MTU, 0);
+            buf
+        };
+        let mut buf = take_buf(&recycle_rx);
 
         loop {
             if *tun_read_stop.borrow() {
@@ -131,11 +138,16 @@ pub async fn run_packet_loop(
             match file.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if tun_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                    buf.truncate(n);
+                    // Hand ownership of this buffer to the async loop (no copy);
+                    // fetch another (recycled or fresh) for the next read.
+                    if tun_tx.blocking_send(buf).is_err() {
                         break; // receiver dropped
                     }
+                    buf = take_buf(&recycle_rx);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // No data: keep the same buffer and retry after a short nap.
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 Err(e) => {
@@ -156,41 +168,23 @@ pub async fn run_packet_loop(
     // UDP receive buffer
     let mut udp_buf = vec![0u8; TUN_MTU + WIREGUARD_OVERHEAD];
 
-    // Batching configuration
-    let batch_size = std::env::var("BATCH_SIZE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_BATCH_SIZE)
-        .max(1);
-    let batch_timeout = std::env::var("BATCH_TIMEOUT_MS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_BATCH_TIMEOUT_MS);
-
-    // Packet buffer for batching
-    let mut packet_buffer: Vec<Vec<u8>> = Vec::with_capacity(batch_size);
-    let mut batch_timer = tokio::time::interval(Duration::from_millis(batch_timeout));
-    batch_timer.tick().await; // Skip first immediate tick
+    // Reused encrypt/decrypt scratch buffers, hoisted out of the hot loop so no
+    // per-packet Vec is allocated+zeroed. Sized for the largest possible output
+    // (a full-MTU TUN read plus WireGuard overhead; a decrypted plaintext is
+    // always smaller than its ciphertext, which fits `udp_buf`). boringtun
+    // writes exactly the output bytes and returns that subslice, so only the
+    // returned `[..n]`/`[..len]` prefix is ever read — stale trailing bytes from
+    // a previous larger packet are never transmitted.
+    let mut encrypted = vec![0u8; TUN_MTU + WIREGUARD_OVERHEAD];
+    let mut decrypted = vec![0u8; TUN_MTU + WIREGUARD_OVERHEAD];
 
     loop {
         tokio::select! {
             // --- Shutdown signal ---
             _ = stop_rx.changed() => {
                 if *stop_rx.borrow() {
-                    // Flush remaining packets before shutdown
-                    if !packet_buffer.is_empty() {
-                        flush_packet_buffer(&udp, &packet_buffer).await;
-                    }
                     info!("Packet loop received shutdown signal");
                     return PacketLoopExit::Shutdown;
-                }
-            }
-
-            // --- Batch timeout: flush buffer ---
-            _ = batch_timer.tick() => {
-                if !packet_buffer.is_empty() {
-                    flush_packet_buffer(&udp, &packet_buffer).await;
-                    packet_buffer.clear();
                 }
             }
 
@@ -210,11 +204,11 @@ pub async fn run_packet_loop(
                         } else {
                             debug!("DNS query blocked locally ({} bytes returned)", reply.len());
                         }
+                        let _ = recycle_tx.send(packet);
                         continue;
                     }
                 }
 
-                let mut encrypted = vec![0u8; packet.len() + WIREGUARD_OVERHEAD];
                 let send_result = {
                     let mut tun_lock = match tunnel.lock() {
                         Ok(t) => t,
@@ -225,17 +219,18 @@ pub async fn run_packet_loop(
                     };
                     tun_lock.encapsulate(&packet, &mut encrypted)
                 };
+                // Done reading `packet` — return its buffer to the reader's pool.
+                let _ = recycle_tx.send(packet);
 
                 match send_result {
                     Ok(0) => {} // Nothing to send (e.g., handshake pending)
                     Ok(n) => {
-                        // Add to buffer instead of sending immediately
-                        packet_buffer.push(encrypted[..n].to_vec());
-
-                        // Flush if buffer is full
-                        if packet_buffer.len() >= batch_size {
-                            flush_packet_buffer(&udp, &packet_buffer).await;
-                            packet_buffer.clear();
+                        // Send immediately. The old batch loop still issued one
+                        // send() per packet, so it coalesced no syscalls — it
+                        // only added up to a few ms of latency plus a per-packet
+                        // `.to_vec()` copy. Read only the `[..n]` boringtun wrote.
+                        if let Err(e) = udp.send(&encrypted[..n]).await {
+                            warn!("UDP send error: {}", e);
                         }
                     }
                     Err(e) => {
@@ -248,7 +243,6 @@ pub async fn run_packet_loop(
             result = udp.recv(&mut udp_buf) => {
                 match result {
                     Ok(n) => {
-                        let mut decrypted = vec![0u8; n];
                         let decrypt_result = {
                             let mut tun_lock = match tunnel.lock() {
                                 Ok(t) => t,
@@ -282,8 +276,8 @@ pub async fn run_packet_loop(
 
             // --- Keepalive timer ---
             _ = keepalive_timer.tick() => {
-                // Send an empty encapsulated packet as keepalive
-                let mut keepalive_buf = vec![0u8; WIREGUARD_OVERHEAD];
+                // Send an empty encapsulated packet as keepalive, reusing the
+                // hoisted `encrypted` scratch buffer.
                 let ka_result = {
                     let mut tun_lock = match tunnel.lock() {
                         Ok(t) => t,
@@ -292,13 +286,13 @@ pub async fn run_packet_loop(
                             continue;
                         }
                     };
-                    tun_lock.encapsulate(&[], &mut keepalive_buf)
+                    tun_lock.encapsulate(&[], &mut encrypted)
                 };
 
                 match ka_result {
                     Ok(0) => {} // Nothing to send
                     Ok(n) => {
-                        if let Err(e) = udp.send(&keepalive_buf[..n]).await {
+                        if let Err(e) = udp.send(&encrypted[..n]).await {
                             warn!("Keepalive send error: {}", e);
                         } else {
                             debug!("Sent keepalive ({} bytes)", n);
@@ -309,21 +303,6 @@ pub async fn run_packet_loop(
                     }
                 }
             }
-        }
-    }
-}
-
-/// Flushes the packet buffer by sending all packets via UDP.
-///
-/// This function sends all encrypted packets in the buffer to the VPN server.
-/// Packets are sent individually since WireGuard requires each packet to be
-/// in its own datagram for proper decryption.
-async fn flush_packet_buffer(udp: &UdpSocket, buffer: &[Vec<u8>]) {
-    for packet in buffer {
-        if let Err(e) = udp.send(packet).await {
-            warn!("UDP batch send error: {}", e);
-        } else {
-            debug!("Sent batched {} encrypted bytes to server", packet.len());
         }
     }
 }

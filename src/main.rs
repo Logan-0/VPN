@@ -22,28 +22,28 @@
 //! It does not handle networking directly (GUI controls VPN via controller).
 //! It does not parse command-line arguments (GUI-only application).
 
+use anyhow::Result;
 use rust_vpn::config::VpnConfig;
 use rust_vpn::gui::app::VpnApp;
 use rust_vpn::privilege;
 use rust_vpn::server::ServerManager;
-use anyhow::Result;
 
 /// Main entry point for the RustVPN application
-/// 
+///
 /// Performs graceful startup with privilege checks, configuration loading,
 /// and validation before starting the Iced GUI application.
-/// 
+///
 /// ## Networking Context
-/// 
+///
 /// The main function sets up the environment for VPN operations:
 /// - Logging: Captures network operations for debugging
 /// - Privilege checks: Ensures required permissions for TUN devices
 /// - Configuration: Loads user preferences and server selection
 /// - GUI: Provides user interface for VPN control
 /// - Runtime: Manages async tasks for VPN tunnel
-/// 
+///
 /// ## Logging
-/// 
+///
 /// Uses tracing-subscriber for structured logging. This logs:
 /// - VPN connection attempts
 /// - Packet encryption/decryption operations
@@ -54,7 +54,7 @@ fn main() {
     // Initialize structured logging for network operations
     // This captures all VPN-related events for debugging and monitoring
     tracing_subscriber::fmt::init();
-    
+
     tracing::info!("RustVPN starting...");
 
     // Capture the invoking user's UID/GID *before* anything else runs.
@@ -100,13 +100,13 @@ fn main() {
             VpnConfig::default()
         }
     };
-    
+
     // Validate configuration
     if let Err(e) = validate_config(&config) {
         eprintln!("Error: Invalid configuration: {}", e);
         std::process::exit(1);
     }
-    
+
     // The update check is now spawned inside `VpnApp::new()` so the result
     // can be routed back to the GUI as a dismissable `UpdateAvailable` banner
     // (see `src/gui/app.rs`). Keeping it here would either duplicate the
@@ -119,16 +119,11 @@ fn main() {
     VpnApp::run();
 }
 
-/// Checks if the application is running with required privileges
-/// 
-/// VPN operations require:
-/// - Linux: root or CAP_NET_ADMIN capability
-/// - macOS: root privileges
-/// - Windows: Administrator privileges
-/// 
-/// Returns true if running with required privileges, false otherwise
+/// Checks if the application is running with required privileges.
+///
+/// VPN operations require root or the `CAP_NET_ADMIN` capability (Linux-only).
+/// Returns true if running with required privileges, false otherwise.
 fn check_privileges() -> bool {
-    #[cfg(target_os = "linux")]
     {
         // Check if running as root
         if nix::unistd::Uid::effective().is_root() {
@@ -139,15 +134,19 @@ fn check_privileges() -> bool {
             eprintln!("  ./target/release/rust-vpn");
             return true;
         }
-        
+
         // Check for CAP_NET_ADMIN capability using caps crate
-        if let Ok(has_cap) = caps::has_cap(None, caps::CapSet::Permitted, caps::Capability::CAP_NET_ADMIN) {
+        if let Ok(has_cap) = caps::has_cap(
+            None,
+            caps::CapSet::Permitted,
+            caps::Capability::CAP_NET_ADMIN,
+        ) {
             if has_cap {
                 tracing::info!("Running with CAP_NET_ADMIN capability");
                 return true;
             }
         }
-        
+
         tracing::error!("Not running as root or with CAP_NET_ADMIN capability");
         eprintln!("Error: RustVPN requires CAP_NET_ADMIN capability to create TUN devices and configure routing.");
         eprintln!();
@@ -161,49 +160,15 @@ fn check_privileges() -> bool {
         eprintln!("  ./target/release/rust-vpn");
         false
     }
-    
-    #[cfg(target_os = "macos")]
-    {
-        // Check if running as root
-        if nix::unistd::Uid::effective().is_root() {
-            tracing::info!("Running as root");
-            true
-        } else {
-            tracing::error!("Not running as root");
-            false
-        }
-    }
-    
-    #[cfg(target_os = "windows")]
-    {
-        // Windows support is not implemented yet (see lib.rs's Platform Notes —
-        // no platform::windows module, no KillSwitch::enable_windows firewall
-        // rules). A privilege gate that can't verify the privilege it's gating
-        // must fail closed, not optimistically proceed: returning `true` here
-        // would let the app limp past this check into TUN-device creation
-        // failures with a confusing later error, or worse, into believing it
-        // has protections it cannot actually provide on this platform.
-        tracing::error!(
-            "Administrator privilege check is not implemented for Windows, and \
-             Windows is not a supported platform yet — refusing to run"
-        );
-        false
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        tracing::error!("Privilege check not implemented for this platform — refusing to run");
-        false // Fail closed: an unrecognized platform is not a verified-privileged one.
-    }
 }
 
 /// Validates the configuration values
-/// 
+///
 /// Ensures that configuration values are within acceptable ranges
 /// and that required fields are present.
-/// 
+///
 /// ## Checks Performed
-/// 
+///
 /// 1. If a server identifier is saved, verify it exists in the server list.
 ///    A stale or mistyped identifier is downgraded to `None` so the GUI
 ///    falls back to the first server rather than silently selecting nothing.
@@ -225,4 +190,3 @@ fn validate_config(config: &VpnConfig) -> Result<()> {
     }
     Ok(())
 }
-

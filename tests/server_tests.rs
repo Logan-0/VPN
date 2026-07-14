@@ -92,7 +92,10 @@ fn test_server_display_list() {
 fn test_select_best_server() {
     let manager = ServerManager::new().unwrap();
     let best = manager.select_best_server();
-    assert!(best.is_some(), "Should return a server when list is non-empty");
+    assert!(
+        best.is_some(),
+        "Should return a server when list is non-empty"
+    );
 }
 
 #[test]

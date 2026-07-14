@@ -85,10 +85,10 @@ impl std::fmt::Display for ConnectionState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Disconnected => write!(f, "Disconnected"),
-            Self::Connecting   => write!(f, "Connecting..."),
-            Self::Connected    => write!(f, "Connected"),
+            Self::Connecting => write!(f, "Connecting..."),
+            Self::Connected => write!(f, "Connected"),
             Self::Reconnecting => write!(f, "Reconnecting..."),
-            Self::Error        => write!(f, "Error"),
+            Self::Error => write!(f, "Error"),
         }
     }
 }
@@ -131,9 +131,7 @@ pub enum Message {
     AutoReconnectToggled(bool),
     /// The user toggled the DNS Filtering checkbox.
     DnsFilteringToggled(bool),
-    /// An event arrived from the async VPN core worker.
-    CoreEvent(VpnEvent),
-    /// 100 ms timer tick: drains the VPN core event channel and refreshes the uptime display.
+    /// 1 s timer tick: drains the VPN core event channel and refreshes the uptime display.
     Tick,
     /// The user dismissed the "update available" banner.
     DismissUpdateBanner,
@@ -207,14 +205,19 @@ impl VpnApp {
 
         // Spawn the background update check. We do it here (rather than in
         // `main`) because we need a handle to the controller's event channel
-        // so the result can render as a dismissable banner. The check runs
-        // on its own short-lived Tokio runtime and fires exactly one
-        // `VpnEvent::UpdateAvailable` if a newer release is found.
+        // so the result can render as a dismissable banner. The check runs on
+        // its own short-lived, single-threaded Tokio runtime (one sequential
+        // HTTP GET doesn't need the `num_cpus` worker pool a multi-thread
+        // runtime spawns) and fires exactly one `VpnEvent::UpdateAvailable` if a
+        // newer release is found.
         let update_event_tx = controller.external_event_sender();
         std::thread::Builder::new()
             .name("update-check".to_string())
             .spawn(move || {
-                let rt = match tokio::runtime::Runtime::new() {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
                     Ok(rt) => rt,
                     Err(e) => {
                         tracing::warn!("Failed to start update check runtime: {}", e);
@@ -262,24 +265,22 @@ impl VpnApp {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             // ── Connect / Disconnect button ─────────────────────────────
-            Message::ConnectPressed => {
-                match self.connection_state {
-                    ConnectionState::Disconnected | ConnectionState::Error => {
-                        if let Some(ref srv) = self.selected_server {
-                            self.controller.send_command(VpnCommand::Connect {
-                                server_endpoint: srv.0.server_endpoint_address.clone(),
-                                server_public_key_base64: srv.0.server_public_key_base64.clone(),
-                            });
-                            self.connection_state = ConnectionState::Connecting;
-                        }
+            Message::ConnectPressed => match self.connection_state {
+                ConnectionState::Disconnected | ConnectionState::Error => {
+                    if let Some(ref srv) = self.selected_server {
+                        self.controller.send_command(VpnCommand::Connect {
+                            server_endpoint: srv.0.server_endpoint_address.clone(),
+                            server_public_key_base64: srv.0.server_public_key_base64.clone(),
+                        });
+                        self.connection_state = ConnectionState::Connecting;
                     }
-                    ConnectionState::Connected | ConnectionState::Connecting => {
-                        self.controller.send_command(VpnCommand::Disconnect);
-                        self.connection_state = ConnectionState::Disconnected;
-                    }
-                    _ => {}
                 }
-            }
+                ConnectionState::Connected | ConnectionState::Connecting => {
+                    self.controller.send_command(VpnCommand::Disconnect);
+                    self.connection_state = ConnectionState::Disconnected;
+                }
+                _ => {}
+            },
 
             // ── Server dropdown changed ─────────────────────────────────
             Message::ServerSelected(server) => {
@@ -297,14 +298,16 @@ impl VpnApp {
                 if let Err(e) = self.config.save() {
                     tracing::warn!("Failed to save config: {}", e);
                 }
-                self.controller.send_command(VpnCommand::SetKillSwitch(enabled));
+                self.controller
+                    .send_command(VpnCommand::SetKillSwitch(enabled));
             }
             Message::AutoReconnectToggled(enabled) => {
                 self.config.auto_reconnect_enabled = enabled;
                 if let Err(e) = self.config.save() {
                     tracing::warn!("Failed to save config: {}", e);
                 }
-                self.controller.send_command(VpnCommand::SetAutoReconnect(enabled));
+                self.controller
+                    .send_command(VpnCommand::SetAutoReconnect(enabled));
             }
             Message::DnsFilteringToggled(enabled) => {
                 self.config.dns_filtering_protection_enabled = enabled;
@@ -312,9 +315,6 @@ impl VpnApp {
                     tracing::warn!("Failed to save config: {}", e);
                 }
             }
-
-            // ── Events arriving from the async VPN core ─────────────────
-            Message::CoreEvent(event) => self.apply_core_event(event),
 
             // ── Timer tick: drain event channel, refresh uptime display ──
             //
@@ -362,10 +362,11 @@ impl VpnApp {
     fn view(&self) -> Element<Message> {
         // ── Status section ──────────────────────────────────────────────
         let status_color = match self.connection_state {
-            ConnectionState::Connected    => iced::Color::from_rgb(0.0, 0.8, 0.0),
-            ConnectionState::Connecting
-            | ConnectionState::Reconnecting => iced::Color::from_rgb(1.0, 0.65, 0.0),
-            ConnectionState::Error        => iced::Color::from_rgb(1.0, 0.0, 0.0),
+            ConnectionState::Connected => iced::Color::from_rgb(0.0, 0.8, 0.0),
+            ConnectionState::Connecting | ConnectionState::Reconnecting => {
+                iced::Color::from_rgb(1.0, 0.65, 0.0)
+            }
+            ConnectionState::Error => iced::Color::from_rgb(1.0, 0.0, 0.0),
             ConnectionState::Disconnected => iced::Color::WHITE,
         };
 
@@ -388,8 +389,8 @@ impl VpnApp {
         // ── Connect / Disconnect button ─────────────────────────────────
         let button_label = match self.connection_state {
             ConnectionState::Disconnected | ConnectionState::Error => "CONNECT",
-            ConnectionState::Connected    => "DISCONNECT",
-            ConnectionState::Connecting   => "CONNECTING...",
+            ConnectionState::Connected => "DISCONNECT",
+            ConnectionState::Connecting => "CONNECTING...",
             ConnectionState::Reconnecting => "RECONNECTING...",
         };
 
@@ -446,8 +447,7 @@ impl VpnApp {
                     ))
                     .size(14)
                     .width(Length::Fill),
-                    button(text("Dismiss").size(14))
-                        .on_press(Message::DismissUpdateBanner),
+                    button(text("Dismiss").size(14)).on_press(Message::DismissUpdateBanner),
                 ]
                 .spacing(10)
                 .padding(8),
@@ -469,10 +469,7 @@ impl VpnApp {
         items.push(auto_reconnect_cb.into());
         items.push(dns_filtering_cb.into());
 
-        let content = column(items)
-            .spacing(14)
-            .padding(30)
-            .width(Length::Fill);
+        let content = column(items).spacing(14).padding(30).width(Length::Fill);
 
         container(content)
             .width(Length::Fill)
@@ -504,7 +501,12 @@ impl VpnApp {
     /// only `update()` ever touches the receiver -- but the type system
     /// requires it to prove the access is safe.
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
+        // 1 s is exact for the only time-varying widget (HH:MM:SS uptime) and
+        // still drains the worker->GUI event channel each tick. The previous
+        // 100 ms tick rebuilt/re-diffed the whole view 10×/s forever (mostly
+        // byte-identical frames) — pure idle CPU. Worker-driven state changes
+        // are set optimistically in update() so the button never lags.
+        iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
     }
 
     /// Application theme.
@@ -514,9 +516,8 @@ impl VpnApp {
 
     /// Applies a single [`VpnEvent`] from the async worker to the GUI state.
     ///
-    /// Called from two places:
-    /// - `Message::Tick` -- batch-drains the `mpsc` channel every 100 ms
-    /// - `Message::CoreEvent` -- available for a future push-based subscription
+    /// Called from `Message::Tick`, which batch-drains the `mpsc` event channel
+    /// once per second.
     ///
     /// ## Uptime tracking rules
     ///

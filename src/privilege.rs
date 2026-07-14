@@ -98,12 +98,10 @@ pub fn minimize_capabilities() -> Result<()> {
     // Sanity check: confirm CAP_NET_ADMIN is still present in the
     // effective set. If it is missing we cannot create TUN devices and
     // the user will hit a confusing failure on Connect; surface it now.
-    let has_net_admin = caps::has_cap(None, CapSet::Effective, Capability::CAP_NET_ADMIN)
-        .unwrap_or(false);
+    let has_net_admin =
+        caps::has_cap(None, CapSet::Effective, Capability::CAP_NET_ADMIN).unwrap_or(false);
     if has_net_admin {
-        tracing::info!(
-            "Capabilities minimized: only CAP_NET_ADMIN retained (effective set)"
-        );
+        tracing::info!("Capabilities minimized: only CAP_NET_ADMIN retained (effective set)");
     } else {
         tracing::warn!(
             "Capability minimization left process without CAP_NET_ADMIN -- TUN \

@@ -13,7 +13,7 @@
 //! - Channel communication
 //! - Event ordering
 
-use rust_vpn::core::controller::{VpnController, VpnCommand, VpnEvent, VpnState};
+use rust_vpn::core::controller::{VpnCommand, VpnController, VpnEvent, VpnState};
 use std::time::Duration;
 
 fn drain(rx: &std::sync::mpsc::Receiver<VpnEvent>) -> Vec<VpnEvent> {
@@ -108,7 +108,12 @@ fn test_vpn_command_connect_debug() {
 
 #[test]
 fn test_vpn_command_all_variants_debug() {
-    let cmds: &[&str] = &["Disconnect", "SetKillSwitch", "SetAutoReconnect", "Shutdown"];
+    let cmds: &[&str] = &[
+        "Disconnect",
+        "SetKillSwitch",
+        "SetAutoReconnect",
+        "Shutdown",
+    ];
     let produced = [
         format!("{:?}", VpnCommand::Disconnect),
         format!("{:?}", VpnCommand::SetKillSwitch(true)),
@@ -146,7 +151,10 @@ fn test_disconnect_when_idle_emits_disconnected() {
     let found = wait_for_event(&rx, Duration::from_millis(500), |ev| {
         matches!(ev, VpnEvent::StateChanged(VpnState::Disconnected))
     });
-    assert!(found, "Expected Disconnected state event after idle Disconnect");
+    assert!(
+        found,
+        "Expected Disconnected state event after idle Disconnect"
+    );
 }
 
 #[test]
@@ -222,5 +230,8 @@ fn test_multiple_disconnects_all_produce_events() {
         .iter()
         .filter(|e| matches!(e, VpnEvent::StateChanged(VpnState::Disconnected)))
         .count();
-    assert!(disconnected_count >= 1, "Expected at least one Disconnected event");
+    assert!(
+        disconnected_count >= 1,
+        "Expected at least one Disconnected event"
+    );
 }

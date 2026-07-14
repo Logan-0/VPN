@@ -12,10 +12,7 @@
 //! - Safety: Requires root/admin privileges; cleanup on Drop prevents rule leakage
 //!
 //! # Platform Notes
-//! Platform-specific firewall implementations:
-//! - Linux: Uses iptables with custom chain RUSTVPN_OUT
-//! - macOS: Uses pf (packet filter) with rules file
-//! - Windows: Uses netsh to configure Windows Firewall
+//! Linux-only: uses iptables with the custom chain `RUSTVPN_OUT`.
 //!
 //! # Non-goals
 //! This module does not implement packet filtering (delegated to DNS filter module).
@@ -26,12 +23,29 @@ use anyhow::{Context, Result};
 use std::net::IpAddr;
 use tracing::{debug, info, warn};
 
+/// Run an `iptables` command that MUST succeed for the kill switch to be
+/// correct, surfacing a failure as `Err(ctx)` so the caller fails closed.
+fn iptables_checked(args: &[&str], ctx: &'static str) -> Result<()> {
+    std::process::Command::new("iptables")
+        .args(args)
+        .output()
+        .context(ctx)?;
+    Ok(())
+}
+
+/// Run a best-effort `iptables` command whose failure is intentionally ignored
+/// (chain flush/create on enable; every rule removal on disable — failing to
+/// remove a rule leaves the network *more* restricted, the safe direction).
+fn iptables_best_effort(args: &[&str]) {
+    let _ = std::process::Command::new("iptables").args(args).output();
+}
+
 /// Kill switch state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KillSwitchState {
     /// Kill switch is disabled, all traffic allowed
     Disabled,
-    
+
     /// Kill switch is enabled, only VPN traffic allowed
     Enabled,
 }
@@ -42,10 +56,10 @@ pub enum KillSwitchState {
 pub struct KillSwitch {
     /// Current state of the kill switch
     state: KillSwitchState,
-    
+
     /// VPN server IP (allowed through firewall)
     vpn_server_ip: Option<IpAddr>,
-    
+
     /// VPN interface name (e.g., "wg0", "utun0")
     vpn_interface: Option<String>,
 }
@@ -54,7 +68,7 @@ impl KillSwitch {
     /// Creates a new kill switch in disabled state.
     pub fn new() -> Result<Self> {
         info!("Creating kill switch");
-        
+
         Ok(Self {
             state: KillSwitchState::Disabled,
             vpn_server_ip: None,
@@ -72,10 +86,7 @@ impl KillSwitch {
     /// * `vpn_interface` - Name of the VPN network interface (e.g., "wg0")
     ///
     /// # Platform Behavior
-    /// - **Linux**: Uses iptables to block all traffic except VPN — implemented.
-    /// - **macOS** / **Windows**: not implemented yet; this always returns `Err`
-    ///   on these platforms so callers fail closed rather than proceeding
-    ///   unprotected (see [`Self::enable_macos`]/[`Self::enable_windows`]).
+    /// Linux-only: uses iptables to block all traffic except the VPN.
     ///
     /// # Example
     /// ```rust,ignore
@@ -96,19 +107,12 @@ impl KillSwitch {
         self.vpn_server_ip = Some(vpn_server_ip);
         self.vpn_interface = Some(vpn_interface.to_string());
 
-        // Apply platform-specific firewall rules
-        #[cfg(target_os = "linux")]
+        // Apply the firewall rules (Linux-only project).
         self.enable_linux(vpn_server_ip, vpn_interface)?;
-
-        #[cfg(target_os = "macos")]
-        self.enable_macos(vpn_server_ip, vpn_interface)?;
-
-        #[cfg(target_os = "windows")]
-        self.enable_windows(vpn_server_ip, vpn_interface)?;
 
         self.state = KillSwitchState::Enabled;
         info!("Kill switch enabled successfully");
-        
+
         Ok(())
     }
 
@@ -124,20 +128,13 @@ impl KillSwitch {
 
         info!("Disabling kill switch");
 
-        // Remove platform-specific firewall rules
-        #[cfg(target_os = "linux")]
+        // Remove the firewall rules (Linux-only project).
         self.disable_linux()?;
-
-        #[cfg(target_os = "macos")]
-        self.disable_macos()?;
-
-        #[cfg(target_os = "windows")]
-        self.disable_windows()?;
 
         self.state = KillSwitchState::Disabled;
         self.vpn_server_ip = None;
         self.vpn_interface = None;
-        
+
         info!("Kill switch disabled successfully");
         Ok(())
     }
@@ -171,75 +168,69 @@ impl KillSwitch {
     /// arm. A partial failure never leaves an intermediate "some rules
     /// applied" state that looks protected but isn't: everything before the
     /// final link-in step is inert until that step runs.
-    #[cfg(target_os = "linux")]
     fn enable_linux(&self, vpn_server_ip: IpAddr, vpn_interface: &str) -> Result<()> {
         use std::process::Command;
 
         info!("Applying Linux iptables rules");
 
-        // Flush existing rules in our custom chain (if it exists)
-        let _ = Command::new("iptables")
-            .args(["-F", "RUSTVPN_OUT"])
-            .output();
+        // Flush existing rules in our custom chain (if it exists) — best effort.
+        iptables_best_effort(&["-F", "RUSTVPN_OUT"]);
 
-        // Create custom chain for our rules
-        let _ = Command::new("iptables")
-            .args(["-N", "RUSTVPN_OUT"])
-            .output();
+        // Create custom chain for our rules — best effort (may already exist).
+        iptables_best_effort(&["-N", "RUSTVPN_OUT"]);
 
         // Allow loopback
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-o", "lo", "-j", "ACCEPT"])
-            .output()
-            .context("Failed to add loopback rule")?;
+        iptables_checked(
+            &["-A", "RUSTVPN_OUT", "-o", "lo", "-j", "ACCEPT"],
+            "Failed to add loopback rule",
+        )?;
 
         // Allow VPN interface
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-o", vpn_interface, "-j", "ACCEPT"])
-            .output()
-            .context("Failed to add VPN interface rule")?;
+        iptables_checked(
+            &["-A", "RUSTVPN_OUT", "-o", vpn_interface, "-j", "ACCEPT"],
+            "Failed to add VPN interface rule",
+        )?;
 
         // Allow connection to VPN server
-        Command::new("iptables")
-            .args([
-                "-A", "RUSTVPN_OUT",
-                "-d", &vpn_server_ip.to_string(),
-                "-p", "udp",
-                "--dport", "51820",
-                "-j", "ACCEPT",
-            ])
-            .output()
-            .context("Failed to add VPN server rule")?;
+        let vpn_server_ip = vpn_server_ip.to_string();
+        iptables_checked(
+            &[
+                "-A",
+                "RUSTVPN_OUT",
+                "-d",
+                &vpn_server_ip,
+                "-p",
+                "udp",
+                "--dport",
+                "51820",
+                "-j",
+                "ACCEPT",
+            ],
+            "Failed to add VPN server rule",
+        )?;
 
-        // Allow local network (192.168.0.0/16)
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-d", "192.168.0.0/16", "-j", "ACCEPT"])
-            .output()
-            .context("Failed to add local network rule")?;
-
-        // Allow local network (10.0.0.0/8)
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-d", "10.0.0.0/8", "-j", "ACCEPT"])
-            .output()
-            .context("Failed to add local network rule")?;
-
-        // Allow local network (172.16.0.0/12)
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-d", "172.16.0.0/12", "-j", "ACCEPT"])
-            .output()
-            .context("Failed to add local network rule")?;
+        // Allow local (RFC1918) networks
+        for cidr in ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"] {
+            iptables_checked(
+                &["-A", "RUSTVPN_OUT", "-d", cidr, "-j", "ACCEPT"],
+                "Failed to add local network rule",
+            )?;
+        }
 
         // Drop everything else
-        Command::new("iptables")
-            .args(["-A", "RUSTVPN_OUT", "-j", "DROP"])
-            .output()
-            .context("Failed to add drop rule")?;
+        iptables_checked(
+            &["-A", "RUSTVPN_OUT", "-j", "DROP"],
+            "Failed to add drop rule",
+        )?;
 
-        // Insert our chain at the beginning of OUTPUT
-        Command::new("iptables")
-            .args(["-I", "OUTPUT", "1", "-j", "RUSTVPN_OUT"])
-            .output()
-            .context("Failed to insert chain into OUTPUT")?;
+        // Insert our chain at the beginning of OUTPUT. This is the link-in step
+        // that actually activates the kill switch — kept LAST and `?`-checked so
+        // a partial earlier failure never leaves a half-applied "looks blocked
+        // but isn't" state (see the ordering-invariant doc above).
+        iptables_checked(
+            &["-I", "OUTPUT", "1", "-j", "RUSTVPN_OUT"],
+            "Failed to insert chain into OUTPUT",
+        )?;
 
         // Block IPv6 to prevent leaks (unless VPN supports it)
         let _ = Command::new("ip6tables")
@@ -261,25 +252,17 @@ impl KillSwitch {
     /// `controller.rs`) for the same reason: erring toward "still blocked"
     /// on cleanup failure is acceptable, unlike erring toward "not blocked"
     /// on enable failure.
-    #[cfg(target_os = "linux")]
     fn disable_linux(&self) -> Result<()> {
         use std::process::Command;
 
         info!("Removing Linux iptables rules");
 
-        // Remove our chain from OUTPUT
-        let _ = Command::new("iptables")
-            .args(["-D", "OUTPUT", "-j", "RUSTVPN_OUT"])
-            .output();
+        // Remove our chain from OUTPUT (best effort)
+        iptables_best_effort(&["-D", "OUTPUT", "-j", "RUSTVPN_OUT"]);
 
-        // Flush and delete our custom chain
-        let _ = Command::new("iptables")
-            .args(["-F", "RUSTVPN_OUT"])
-            .output();
-
-        let _ = Command::new("iptables")
-            .args(["-X", "RUSTVPN_OUT"])
-            .output();
+        // Flush and delete our custom chain (best effort)
+        iptables_best_effort(&["-F", "RUSTVPN_OUT"]);
+        iptables_best_effort(&["-X", "RUSTVPN_OUT"]);
 
         // Restore IPv6
         let _ = Command::new("ip6tables")
@@ -287,54 +270,6 @@ impl KillSwitch {
             .output();
 
         info!("Linux iptables rules removed successfully");
-        Ok(())
-    }
-
-    /// macOS is not yet supported: no `pf` firewall rules are implemented.
-    ///
-    /// This exists only so `enable()`'s `#[cfg(target_os = "macos")]` call
-    /// site resolves to a clear, fail-closed runtime error instead of a
-    /// confusing "no method named `enable_macos`" compile error. Returning
-    /// `Err` here means `KillSwitch::enable` propagates the failure, and
-    /// `core::controller`'s fail-closed handling refuses to bring up the
-    /// tunnel — so a macOS build cannot connect while claiming kill-switch
-    /// protection it doesn't actually have. Do not change this to `Ok(())`
-    /// without implementing real `pf` rules first.
-    #[cfg(target_os = "macos")]
-    fn enable_macos(&self, _vpn_server_ip: IpAddr, _vpn_interface: &str) -> Result<()> {
-        anyhow::bail!(
-            "kill switch is not implemented on macOS yet (no pf firewall rules) — \
-             refusing to enable so a connection is never made without the \
-             protection the user requested"
-        )
-    }
-
-    /// macOS is not yet supported — see [`Self::enable_macos`]. Disabling a
-    /// kill switch that was never actually enabled is a no-op by definition,
-    /// so unlike `enable_macos` this does not need to error.
-    #[cfg(target_os = "macos")]
-    fn disable_macos(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Windows is not yet supported: no Windows Filtering Platform / `netsh`
-    /// rules are implemented. See [`Self::enable_macos`] for why this
-    /// fails closed with `Err` rather than being left as a compile error.
-    /// Do not change this to `Ok(())` without implementing real firewall
-    /// rules first.
-    #[cfg(target_os = "windows")]
-    fn enable_windows(&self, _vpn_server_ip: IpAddr, _vpn_interface: &str) -> Result<()> {
-        anyhow::bail!(
-            "kill switch is not implemented on Windows yet (no firewall rules) — \
-             refusing to enable so a connection is never made without the \
-             protection the user requested"
-        )
-    }
-
-    /// Windows is not yet supported — see [`Self::enable_windows`]. Disabling
-    /// a kill switch that was never actually enabled is a no-op by definition.
-    #[cfg(target_os = "windows")]
-    fn disable_windows(&self) -> Result<()> {
         Ok(())
     }
 }

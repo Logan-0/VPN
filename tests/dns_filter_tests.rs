@@ -150,10 +150,7 @@ fn test_external_dns_mode_allows_everything() {
     // In external DNS mode, the filter defers to the Pi-hole
     assert!(!filter.is_blocked("doubleclick.net"));
     assert!(!filter.is_blocked("malware.example.com"));
-    assert_eq!(
-        *filter.mode(),
-        DnsFilterMode::ExternalDns(pihole_ip)
-    );
+    assert_eq!(*filter.mode(), DnsFilterMode::ExternalDns(pihole_ip));
 }
 
 #[test]
