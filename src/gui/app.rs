@@ -359,7 +359,7 @@ impl VpnApp {
     /// Reads the current state and returns a declarative widget tree. Iced
     /// diffs the previous tree against the new one and only repaints what
     /// changed -- similar to how React works in the browser.
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // ── Status section ──────────────────────────────────────────────
         let status_color = match self.connection_state {
             ConnectionState::Connected => iced::Color::from_rgb(0.0, 0.8, 0.0),

@@ -20,13 +20,12 @@
 
 use std::sync::{mpsc, Arc, Mutex};
 
-use crate::config::VpnConfig;
+use crate::config::{VpnConfig, WorkerStartupState};
 use crate::core::killswitch::KillSwitch;
 use crate::core::reconnect::ReconnectManager;
 use crate::core::tunnel::{base64_to_key, Tunnel, TunnelConfig};
 use crate::dns::filter::DnsFilter;
 use tokio::sync::watch;
-use zeroize::Zeroizing;
 
 // ── Platform abstraction ─────────────────────────────────────────────────────
 //
@@ -114,6 +113,12 @@ pub struct VpnController {
     /// to push events into the GUI's event channel without going through
     /// the VPN command pipeline.
     external_event_tx: mpsc::Sender<VpnEvent>,
+}
+
+impl Default for VpnController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VpnController {
@@ -261,11 +266,7 @@ impl VpnController {
         // arrives, without blocking the async loop with config I/O.
         // Stored as Options so a load/parse failure degrades gracefully: the
         // Connect handler checks for None and emits an error event to the GUI.
-        let (client_private_key, client_tun_addr, dns_filter): (
-            Option<Zeroizing<[u8; 32]>>,
-            Option<((u8, u8, u8, u8), (u8, u8, u8, u8))>,
-            Option<Arc<DnsFilter>>,
-        ) = {
+        let (client_private_key, client_tun_addr, dns_filter): WorkerStartupState = {
             let mut cfg = VpnConfig::load().unwrap_or_default();
             let key = match cfg.get_or_create_private_key() {
                 Ok(k) => {

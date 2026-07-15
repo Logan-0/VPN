@@ -28,11 +28,13 @@ fn test_default_config_values() {
 
 #[test]
 fn test_config_toml_round_trip() {
-    let mut config = VpnConfig::default();
-    config.auto_connect_on_application_startup = true;
-    config.kill_switch_protection_enabled = false;
-    config.selected_vpn_server_identifier = Some("us-california-1".to_string());
-    config.custom_dns_server_address = Some("192.168.1.53".to_string());
+    let config = VpnConfig {
+        auto_connect_on_application_startup: true,
+        kill_switch_protection_enabled: false,
+        selected_vpn_server_identifier: Some("us-california-1".to_string()),
+        custom_dns_server_address: Some("192.168.1.53".to_string()),
+        ..Default::default()
+    };
 
     // Serialize to TOML
     let toml_str = toml::to_string_pretty(&config).unwrap();

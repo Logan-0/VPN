@@ -125,7 +125,7 @@ fn test_key_to_base64_all_zeros_is_stable() {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     let zeros = [0u8; 32];
     let b64 = key_to_base64(&zeros);
-    let expected = STANDARD.encode(&zeros);
+    let expected = STANDARD.encode(zeros);
     assert_eq!(b64, expected);
 }
 

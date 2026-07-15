@@ -29,6 +29,23 @@ use std::fs;
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 
+/// An IPv4 address as four octets, e.g. `(10, 8, 0, 2)`.
+pub type Ipv4Octets = (u8, u8, u8, u8);
+
+/// An `(address, netmask)` pair, both as octet tuples, describing a TUN
+/// interface's IPv4 configuration.
+pub type Ipv4TunAddress = (Ipv4Octets, Ipv4Octets);
+
+/// Startup values loaded once by the VPN worker: the client's WireGuard
+/// private key, its TUN address/netmask, and the compiled DNS filter.
+/// Each is `None` if loading/parsing failed, so the `Connect` handler can
+/// degrade gracefully and report an error to the GUI.
+pub type WorkerStartupState = (
+    Option<Zeroizing<[u8; 32]>>,
+    Option<Ipv4TunAddress>,
+    Option<std::sync::Arc<crate::dns::filter::DnsFilter>>,
+);
+
 /// VPN Configuration Structure
 ///
 /// This structure contains all user-configurable settings for the VPN application.
@@ -359,6 +376,7 @@ impl VpnConfig {
     /// **Subsequent calls** (`client_private_key_base64` is `Some(b64)`):
     /// 1. The base64 string is decoded back to 32 bytes.
     /// 2. The bytes are returned wrapped in [`Zeroizing`].
+    ///
     /// The same key is always returned, giving the server a stable client identity.
     ///
     /// ## Why `&mut self`?
@@ -401,7 +419,7 @@ impl VpnConfig {
         let key_bytes: [u8; 32] = private.to_bytes();
 
         // Persist the new key immediately so the same identity survives restarts.
-        self.client_private_key_base64 = Some(STANDARD.encode(&key_bytes));
+        self.client_private_key_base64 = Some(STANDARD.encode(key_bytes));
         self.save()
             .context("Failed to save newly generated private key")?;
 
@@ -435,7 +453,7 @@ impl VpnConfig {
     /// Returns `Err` if the stored CIDR cannot be parsed, the address is not
     /// IPv4, or the prefix length exceeds 32. The connect handler propagates
     /// this to the GUI as a user-visible error.
-    pub fn client_tun_address(&self) -> Result<((u8, u8, u8, u8), (u8, u8, u8, u8))> {
+    pub fn client_tun_address(&self) -> Result<Ipv4TunAddress> {
         let cidr = self.client_tun_ip_cidr.as_deref().unwrap_or("10.8.0.2/24");
         parse_ipv4_cidr(cidr).with_context(|| format!("Invalid client_tun_ip_cidr '{}'", cidr))
     }
@@ -451,7 +469,7 @@ impl VpnConfig {
 /// - `"10.8.0.2/24"` -> `((10, 8, 0, 2), (255, 255, 255, 0))`
 /// - `"172.16.0.10/16"` -> `((172, 16, 0, 10), (255, 255, 0, 0))`
 /// - `"10.0.0.1/8"` -> `((10, 0, 0, 1), (255, 0, 0, 0))`
-fn parse_ipv4_cidr(cidr: &str) -> Result<((u8, u8, u8, u8), (u8, u8, u8, u8))> {
+fn parse_ipv4_cidr(cidr: &str) -> Result<Ipv4TunAddress> {
     let (addr_part, prefix_part) = cidr
         .split_once('/')
         .context("missing '/' between address and prefix length")?;

@@ -59,8 +59,6 @@ fn passes_through_non_udp_packets() {
 
 #[test]
 fn passes_through_non_dns_udp_packets() {
-    use rust_vpn::dns::intercept::{DNS_CLASS_IN, DNS_PORT, DNS_TYPE_A};
-
     let mut filter = DnsFilter::new().unwrap();
     filter.add_blocked_domain("ads.example.com");
     let dns_like = vec![0u8; 12];

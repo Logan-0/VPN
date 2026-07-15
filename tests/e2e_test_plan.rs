@@ -154,10 +154,12 @@ async fn e2e_dns_resolver_custom_pihole() {
 
 #[test]
 fn e2e_config_round_trip() {
-    let mut config = VpnConfig::default();
-    config.selected_vpn_server_identifier = Some("us-california-1".to_string());
-    config.custom_dns_server_address = Some("192.168.1.53".to_string());
-    config.kill_switch_protection_enabled = false;
+    let config = VpnConfig {
+        selected_vpn_server_identifier: Some("us-california-1".to_string()),
+        custom_dns_server_address: Some("192.168.1.53".to_string()),
+        kill_switch_protection_enabled: false,
+        ..Default::default()
+    };
 
     let toml_str = toml::to_string_pretty(&config).unwrap();
     let restored: VpnConfig = toml::from_str(&toml_str).unwrap();
