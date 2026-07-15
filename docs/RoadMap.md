@@ -145,8 +145,7 @@ silently substituting the default.
 
 v1.0.0 is the documented, stable release. There is no "Before 1.0" backlog
 left open, and no Windows/macOS work is planned or deferred — both were
-evaluated and deliberately retired (see commit `bf1a8a7`). Historical audit
-notes on error handling, testing, and optimization live in their respective
-execution specs (`ErrorHandlingExecutionSpec.md`, `TestingStrategyExecutionSpec.md`,
-`OptimizationExecutionSpec.md`); items marked "not attempted" there are
-recorded technical debt, not committed roadmap work.
+evaluated and deliberately retired (see commit `bf1a8a7`). The former audit
+execution specs (error handling, testing, optimization, code commenting) were
+retired from `docs/` once their recommendations were applied; the most recent
+optimization pass is summarized in `docs/ChangeLog.md` under `[Unreleased]`.

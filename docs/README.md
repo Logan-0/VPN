@@ -110,9 +110,7 @@ VPN/
 │   │   │                          macOS/Windows fail closed, not implemented)
 │   │   ├── reconnect.rs           Auto-reconnect logic
 │   │   ├── tunnel.rs              WireGuard tunnel (encapsulate/decapsulate)
-│   │   ├── packet_loop.rs         Packet processing (Linux/unix)
-│   │   └── packet_loop_windows.rs Packet processing (Windows) — present but
-│   │                              dead code: no platform::windows to pair with
+│   │   └── packet_loop.rs         Packet processing (Linux/unix)
 │   ├── dns/
 │   │   ├── mod.rs
 │   │   ├── filter.rs              Blocklist filtering
@@ -131,7 +129,9 @@ VPN/
 └── setup.sh                       Linux setup script
 ```
 
-Note: `src/platform/macos.rs`, `src/platform/windows.rs`, and
+Note: `src/platform/macos.rs`, `src/platform/windows.rs`,
+`src/core/packet_loop_windows.rs` (the dead Windows packet loop, removed in
+the post-1.0.0 optimization pass — see `docs/ChangeLog.md`), and
 `src/tunnel/noise.rs` (WireGuard Noise protocol, superseded by `boringtun`
 via `src/core/tunnel.rs`) do not exist in the current tree — this file
 previously listed them as present.

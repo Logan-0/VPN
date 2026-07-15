@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - 2026-07-14
+
+Post-1.0.0 optimization pass. Internal refactors, hot-path allocation
+cleanup, and dead-code/dependency pruning only — no user-facing feature
+change, and the safety-critical behaviors (kill-switch fail-closed ordering,
+WireGuard crypto correctness, DNS-leak prevention) are preserved. Every claim
+below maps to a change in commit `8633749`.
+
+### Changed
+
+- **Packet loop hot path** (`src/core/packet_loop.rs`) — Removed the
+  env-configurable UDP batching (`BATCH_SIZE` / `BATCH_TIMEOUT_MS`,
+  `flush_packet_buffer`), which issued one `send()` per packet anyway (it
+  coalesced no syscalls) while adding up to a few ms of latency and a
+  per-packet `.to_vec()` copy; outbound encrypted packets are now sent
+  immediately. Added a TUN buffer recycling free-list and hoisted the
+  encrypt/decrypt scratch buffers out of the loop, so no per-packet `Vec` is
+  allocated and zeroed. **Crypto correctness preserved**: only the
+  boringtun-written `[..n]` prefix is ever transmitted, so stale trailing
+  bytes from a reused buffer are never sent.
+- **Kill switch** (`src/core/killswitch.rs`) — Collapsed the repeated
+  `iptables` invocations into `iptables_checked` / `iptables_best_effort`
+  helpers plus an RFC 1918 loop. **Fail-closed ordering preserved**: the
+  OUTPUT chain link-in remains the last, `?`-checked step so a partial
+  failure never leaves a "looks blocked but isn't" state, and rule removal on
+  disable stays best-effort (failing to remove a rule leaves the network
+  *more* restricted — the safe direction).
+- **Controller** (`src/core/controller.rs`) — Centralized the
+  "emit `Error` event + `StateChanged(Error)`" invariant in `emit_error()`
+  and the backoff-then-re-`Connect` logic in `resend_connect_after()`, shared
+  by both auto-reconnect retry paths. The exponential backoff ladder is
+  unchanged.
+- **DNS filtering** (`src/dns/filter.rs`, `src/dns/intercept.rs`) — Blocklist
+  matching now normalizes qnames through a `Cow`, so only the rare
+  mixed-case / trailing-dot / non-ASCII query allocates; qname parsing
+  reserves worst-case capacity up front. Filtering and DNS-leak-prevention
+  behavior is unchanged.
+- **GUI** (`src/gui/app.rs`) — Dropped the dedicated `CoreEvent`
+  subscription; `VpnEvent`s are now drained from the receiver on the periodic
+  `Tick`, whose interval was relaxed from 100 ms to 1 s, and the startup
+  update check now runs on a current-thread Tokio runtime.
+- **Linux-only conditional cleanup** — Removed dead `macOS`/`Windows`
+  `#[cfg]` branches now that the tree is Linux-only, collapsing
+  `config::get_config_path`, `main`'s privilege check, and the
+  controller/killswitch/`core::mod` platform dispatch to the single supported
+  path. Linux behavior is unchanged, and the privilege check still fails
+  closed.
+
+### Removed
+
+- Dead code: `src/core/packet_loop_windows.rs` (235 lines, unreachable with
+  no `platform::windows` to pair with) and the unused reconnect helpers in
+  `src/core/reconnect.rs` (`health_check_loop`, `ReconnectReason`,
+  `wait_before_reconnect`, `HEALTH_CHECK_INTERVAL`).
+- Unused dependencies from `Cargo.toml`: `rustls`, `rustls-native-certs`,
+  `thiserror`, the Windows-target `windows` / `wintun` crates, and the
+  `tokio-test` dev-dependency.
+- Retired the audit execution-spec documents (`CodeCommentingExecutionSpec.md`,
+  `ErrorHandlingExecutionSpec.md`, `OptimizationExecutionSpec.md`,
+  `TestingStrategyExecutionSpec.md`) from `docs/`.
+
+---
+
 ## [1.0.0] - 2026-07-09
 
 ### Changed
