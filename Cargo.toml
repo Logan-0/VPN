@@ -34,17 +34,17 @@ maintainer-scripts = "debian/"
 tokio = { version = "1.41", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"] }
 
 # WireGuard protocol
-boringtun = "0.6"
+boringtun = "0.7"
 
 # DNS resolution and filtering
 hickory-resolver = { version = "0.24", features = ["dns-over-https-rustls", "dns-over-rustls"] }
 
 # GUI framework (Iced -- cross-platform, pure Rust, Elm-architecture)
-iced = { version = "0.13", features = ["tokio", "wgpu"] }
+iced = { version = "0.14", features = ["tokio", "wgpu"] }
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+toml = "1.1"
 
 # HTTP client for update checking
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -57,23 +57,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1.8"
 
 # Cryptography utilities
-rand = "0.8"
+rand = "0.9"
 base64 = "0.22"
 
 # Error handling
 anyhow = "1.0"
 
 # Network interface management
-tun = "0.6"
+tun = "0.8"
 
 # Platform-specific dependencies
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["net", "socket", "ioctl", "user"] }
+nix = { version = "0.31", features = ["net", "socket", "ioctl", "user"] }
 caps = "0.5"
 
 [dev-dependencies]
 # Testing
-mockall = "0.13"
+mockall = "0.15"
 
 [profile.release]
 opt-level = 3       # Favor packet-loop throughput/latency over binary size
