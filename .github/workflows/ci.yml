@@ -1,0 +1,101 @@
+name: CI
+
+# Runs lint (fmt/clippy), the hermetic cargo test suite, and a release build
+# on every push/PR. Tests marked #[ignore] require root/CAP_NET_ADMIN and a
+# real WireGuard server, so they are intentionally not run here.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup component add rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      # The baseline may have pre-existing style warnings; do not fail on
+      # pedantic lints, only real clippy errors.
+      - run: cargo clippy --all-targets
+
+  test:
+    name: hermetic test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      # Only hermetic tests run in CI. #[ignore]d tests need root / a live
+      # server and are reserved for local on-target validation.
+      - run: cargo test
+
+  build:
+    name: cargo build --release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+
+  coverage:
+    name: coverage (cargo-llvm-cov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          rustup show
+          rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Generate coverage report
+        # Threshold is set to 0 initially; raise after establishing a baseline.
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 0
+      - name: Print coverage summary
+        run: cargo llvm-cov report --summary-only
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-coverage-report
+          path: lcov.info
+          retention-days: 30
