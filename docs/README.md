@@ -2,7 +2,7 @@
 
 **Project Status**: Stable (v1.0.0)
 
-**Version**: 1.0.0 (documented release; see `Projects/VersioningSpec.md`)
+**Version**: 1.0.0 (documented release; see `Projects/Guidelines/VersioningSpec.md`)
 
 ## Documentation
 
@@ -123,9 +123,13 @@ VPN/
 │       ├── mod.rs
 │       └── linux.rs               Linux-specific code — the only implemented platform
 ├── resources/
-│   └── servers.toml               VPN server list
+│   ├── servers.toml               VPN server list
+│   └── servers.toml.example       Template for the server list
 ├── debian/                        Debian packaging
 ├── tests/                         Comprehensive test suite
+├── .github/                       CI/CD (ci, release, security, dependency-review,
+│   │                              actionlint workflows + dependabot)
+├── .pre-commit-config.yaml        Pre-commit hooks
 └── setup.sh                       Linux setup script
 ```
 
@@ -140,8 +144,11 @@ previously listed them as present.
 
 ## Server Coverage
 
-- **United States**: One server per state (50 locations)
-- **Sweden**: Multiple locations (Stockholm, Gothenburg, Malmo)
+Defined in `resources/servers.toml` (9 servers):
+
+- **United States**: California, New York, Texas, Florida
+- **Sweden**: Stockholm, Gothenburg, Malmö
+- **Germany**: Berlin, Frankfurt
 
 ---
 
@@ -157,19 +164,15 @@ cargo build --release
 
 #### Prerequisites
 
-Install required system dependencies:
+Building needs only a Rust toolchain — the GUI uses Iced with the `wgpu`
+backend (pure Rust, `winit`-based), so there are **no GTK or OpenSSL system
+dev packages to install** (TLS goes through `rustls`). CI builds the project
+with no extra `apt` packages.
 
-```bash
-# Debian/Ubuntu
-sudo apt-get update
-sudo apt-get install -y pkg-config libgtk-4-dev libssl-dev
-
-# Fedora/RHEL
-sudo dnf install -y pkg-config gtk4-devel openssl-devel
-
-# Arch Linux
-sudo pacman -S pkg-config gtk4 openssl
-```
+At **runtime** the GUI needs a working display server (X11 or Wayland) and
+GPU drivers (Vulkan/GL). `pkg-config` and a C toolchain (`build-essential`)
+are usually already present; install them if a transitive crate's build
+complains.
 
 #### Quick Start (Recommended)
 
@@ -286,9 +289,11 @@ project ships.
 ```toml
 auto_connect_on_application_startup = false
 kill_switch_protection_enabled = true
+auto_reconnect_enabled = true
 dns_filtering_protection_enabled = true
 selected_vpn_server_identifier = "us-california-1"
-client_tun_ip_cidr = "10.8.0.2/24"  # Optional, defaults to 10.8.0.2/24
+custom_dns_server_address = "1.1.1.1"  # Optional
+client_tun_ip_cidr = "10.8.0.2/24"     # Optional, defaults to 10.8.0.2/24
 ```
 
 ---
