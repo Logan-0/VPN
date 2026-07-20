@@ -1005,34 +1005,35 @@ privileged, environment-dependent systems software.
 
 ---
 
-## 9. Ideas Worth Exploring Next
+## 9. Design Notes & Trade-offs
 
-If this project sparked your curiosity, here are natural next questions to
-chase, each rooted in something you just saw:
+A few design decisions and trade-offs worth calling out, each rooted in
+something above:
 
-- **What would it take to add split-tunneling** (route only some apps or
-  IP ranges through the VPN, not all traffic)? Trace how `allowed_ips` in
-  `TunnelConfig` and the `0.0.0.0/1` + `128.0.0.0/1` routes in
-  `platform/linux.rs` would need to change, and what happens to the
-  "VPN server bypass route" trick from §2.2 if the ranges get narrower.
-- **Why does `try_block_dns_query` reject DNS compression pointers in the
-  question section entirely**, rather than trying to follow them safely?
-  Research "DNS pointer loop denial of service" and think about what a
-  malicious or malformed packet could do to a parser that *did* follow
-  them.
-- **What happens if two `Connect` commands race** — one from
-  auto-reconnect's scheduled retry, one from the user manually clicking
-  Connect again a moment later? Trace the "abort any running session
-  first" block at the top of the `Connect` handler in `controller.rs` and
-  think about whether it's actually race-free.
-- **Why is the DNS-over-HTTPS resolver (`src/dns/resolver.rs`) built,
-  tested, and fully functional, yet never called from the live packet
-  path?** Read the reasoning in `docs/RoadMap.md` and consider: under what
-  future feature (split-tunnel? a "DNS-only" mode?) would wiring it in
-  actually add value over relying on the WireGuard tunnel alone?
-- **What's the actual attack surface if `CAP_NET_ADMIN` alone is
-  compromised** (say, through a bug in packet parsing)? `CAP_NET_ADMIN`
-  can still create raw sockets and manipulate arbitrary interfaces —
-  research what a process holding *only* that one capability can and
-  can't do to a Linux machine, now that you've seen exactly which
-  capability RustVPN keeps and which forty-some it deliberately drops.
+- **Full-tunnel routing, and what split-tunneling would take.** RustVPN routes
+  *all* traffic today via `allowed_ips` in `TunnelConfig` and the `0.0.0.0/1` +
+  `128.0.0.0/1` route pair in `platform/linux.rs`. Split-tunneling (routing only
+  some apps or IP ranges) would mean narrowing `allowed_ips` and those routes —
+  and as the ranges narrow, the "VPN server bypass route" trick from §2.2 needs
+  re-examining so the tunnel's own packets still reach the server.
+- **DNS compression pointers are rejected outright.** `try_block_dns_query`
+  refuses any compression pointer in the question section rather than following
+  it. This closes off the "DNS pointer loop" denial-of-service class: a
+  malicious or malformed packet can drive a parser that *does* follow pointers
+  into an infinite loop, so the safe choice is not to follow them at all.
+- **Overlapping `Connect` commands.** Auto-reconnect's scheduled retry and a
+  manual click can both fire `Connect` a moment apart. The handler in
+  `controller.rs` guards against this by aborting any running session first (the
+  block at the top of `Connect`) before starting a new one, so the intent is
+  that overlapping attempts collapse to a single live session.
+- **The DNS-over-HTTPS resolver is built but dormant.** `src/dns/resolver.rs` is
+  fully implemented and tested yet never called from the live packet path. As
+  `docs/RoadMap.md` explains, it is held in reserve for a future feature — a
+  split-tunnel or "DNS-only" mode — where resolving DNS ourselves would add
+  value over relying on the WireGuard tunnel alone.
+- **Least privilege: only `CAP_NET_ADMIN` is kept.** RustVPN retains a single
+  Linux capability, `CAP_NET_ADMIN`, and deliberately drops the forty-some
+  others. That capability is still powerful — a process holding only it can
+  create raw sockets and manipulate arbitrary network interfaces — so if
+  packet-parsing code were compromised, the attack surface is bounded by what
+  `CAP_NET_ADMIN` alone permits, not full root.
