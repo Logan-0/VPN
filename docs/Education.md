@@ -1,11 +1,11 @@
 # Education — RustVPN
 
-This document is a teaching guide to the RustVPN project. It's written for a
+This document is a plain-English guide to the RustVPN project. It's written for a
 motivated high-school or early-college reader who knows *some* programming
 (variables, loops, functions) but hasn't necessarily touched raw sockets,
 kernel network interfaces, or cryptography before. Every section explains
 **what** the code does, **why** it's built that way, and **what general
-concept** it's teaching you — so you can carry the idea to other projects
+concept** it illustrates — so you can carry the idea to other projects
 even if you never touch this codebase again.
 
 > **Scope note:** RustVPN is Linux-only (v1.0.0, feature-complete). Windows
@@ -55,7 +55,7 @@ packets — drives almost every design decision in this codebase.
 
 ## 2. Networking Concepts You Need First
 
-This is the deep end. RustVPN teaches concepts most web projects never
+This is the deep end. RustVPN uses concepts most web projects never
 touch, because it operates at a much lower layer of the network stack.
 
 ### 2.1 The Layered Network Stack, and Where RustVPN Lives
@@ -934,7 +934,7 @@ assets = [
 maintainer-scripts = "debian/"
 ```
 
-This teaches the general shape of **OS-level packaging**: metadata (name,
+This shows the general shape of **OS-level packaging**: metadata (name,
 maintainer, license, dependencies — `depends = "$auto"` tells `cargo-deb` to
 scan the compiled binary's dynamic library dependencies and generate the
 `.deb`'s dependency list automatically), a list of files to install and
