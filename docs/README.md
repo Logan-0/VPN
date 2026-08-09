@@ -8,15 +8,21 @@
 
 Detailed documentation is available in the `docs/` folder:
 - `docs/Education.md` — Layered architecture, core components, and implementation details
-- `docs/RoadMap.md` — Project status and remaining (optional) work
+- `docs/RoadMap.md` — The (short) list of work that is still open
 - `docs/README.md` — This file (feature summary and technology stack)
-- `docs/ChangeLog.md` — Version history
+- `docs/ChangeLog.md` — Version history and everything already completed
 
 ## Overview
 
 A secure, lightweight VPN client written in Rust using the WireGuard protocol with a graphical interface, kill switch, DNS filtering, and automatic reconnection — **Linux-only** implementation (v1.0.0, feature-complete).
 
 For detailed explanations of VPN concepts, WireGuard protocol, TUN devices, kill switches, and DNS filtering, see `docs/Education.md`.
+
+> **Not to be confused with Tailscale.** RustVPN is a *client-side* WireGuard
+> VPN: it creates a TUN device on this machine and routes this machine's
+> traffic out through a remote VPN server. It is unrelated to the MediaServer
+> project's use of Tailscale for remote access to a NAS behind double-NAT —
+> different problem, different software, no shared code or configuration.
 
 ## Architecture
 
@@ -106,8 +112,7 @@ VPN/
 │   ├── core/
 │   │   ├── mod.rs
 │   │   ├── controller.rs          Core VPN control logic
-│   │   ├── killswitch.rs          Kill switch implementation (Linux only —
-│   │   │                          macOS/Windows fail closed, not implemented)
+│   │   ├── killswitch.rs          Kill switch implementation (iptables, Linux)
 │   │   ├── reconnect.rs           Auto-reconnect logic
 │   │   ├── tunnel.rs              WireGuard tunnel (encapsulate/decapsulate)
 │   │   └── packet_loop.rs         Packet processing (Linux/unix)
@@ -277,10 +282,9 @@ rust-vpn
 |----|------|
 | Linux | `~/.config/rustvpn/config.toml` |
 
-Linux is the only supported platform; the config-loading code still has
-inert `#[cfg(target_os = "macos"/"windows")]` branches left over from before
-`bf1a8a7` retired those platforms, but they are unreachable in any build this
-project ships.
+Linux is the only supported platform. `VpnConfig::get_config_path` is now
+unconditional — the inert macOS/Windows `#[cfg]` branches it once carried were
+removed in the post-1.0.0 optimization pass (see `docs/ChangeLog.md`).
 
 ---
 
@@ -306,7 +310,10 @@ For architecture, traffic/data flow, security model, and networking concept walk
 
 ## Project Status and Limitations
 
-Current implementation status, platform readiness, known limitations, and remaining work are tracked in `docs/RoadMap.md`.
+v1.0.0 is stable and feature-complete on Linux; Windows and macOS were
+retired in `bf1a8a7`. The only open work — adding real server endpoints to
+`resources/servers.toml` — is tracked in `docs/RoadMap.md`. Completed work is
+in `docs/ChangeLog.md`.
 
 ---
 

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - 2026-08-09
+
+### Changed
+
+- **Documentation pass** — `docs/RoadMap.md` was reduced from a 151-line
+  completed-work archive to the small amount of genuinely open work. The
+  five "Completed Items" it described (real server list, DNS filtering at the
+  TUN layer, privilege minimization, update-checker GUI banner, configurable
+  client TUN IP) were already recorded in this file's April 2026 snapshot
+  below and were removed rather than duplicated. The design *rationale* the
+  roadmap carried — why the DoH resolver was deliberately left unwired, and
+  why the original `setuid()` plan was rejected in favour of
+  `minimize_capabilities()` — moved to `docs/Education.md`, which is the
+  right home for it.
+- Corrected the recorded test totals: the suite is **158 passing, 0 failures,
+  10 ignored** (7 of the ignored are doc-tests), not the 156/12 the docs had
+  been repeating.
+- Corrected `docs/README.md`, which still claimed `config::get_config_path`
+  carried inert `#[cfg(target_os = "macos"/"windows")]` branches. Those were
+  removed in the optimization pass recorded below; the function is now
+  unconditional.
+- Reframed the April 2026 snapshot's note on `capture_invoking_user`: it was
+  described as groundwork "for future setuid hardening", but the setuid
+  design was abandoned and the function is a leftover hook.
+
+---
+
 ## [Unreleased] - 2026-07-14
 
 Post-1.0.0 optimization pass. Internal refactors, hot-path allocation
@@ -145,7 +172,8 @@ Windows/macOS support was removed in commit `bf1a8a7`. Items 4 and 7 below
 ### 3. Privilege Minimization (Linux)
 - `privilege::minimize_capabilities()` drops all capabilities except CAP_NET_ADMIN
 - Runs before loading user-controlled input
-- Captures invoking user's UID/GID for future setuid hardening
+- Captures invoking user's UID/GID (`capture_invoking_user`) — a leftover hook
+  from a setuid design that was evaluated and abandoned; see `docs/Education.md`
 - Prevents escalation to CAP_DAC_OVERRIDE, CAP_SYS_ADMIN, CAP_KILL, etc.
 
 ### 4. Windows TUN Device (Structural Only)
@@ -225,13 +253,6 @@ Windows/macOS support was removed in commit `bf1a8a7`. Items 4 and 7 below
 
 ## Next Steps
 
-None required for v1.0.0 — the project is considered feature-complete, and
-no further optional features are planned.
-
-The only ongoing, non-blocking task is adding more real server endpoints to
-`resources/servers.toml` as they become available; this is operational
-upkeep, not development work.
-
-Windows and macOS platform support were evaluated and explicitly retired
-(commit `bf1a8a7`; see `docs/RoadMap.md`). There is no intention to revisit
-either platform.
+Tracked in `docs/RoadMap.md`, not here. In short: nothing is required for
+v1.0.0, and the only ongoing task is adding real server endpoints to
+`resources/servers.toml`.

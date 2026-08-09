@@ -45,8 +45,17 @@ traffic through that tunnel. It uses **WireGuard**, a modern VPN protocol,
 via the `boringtun` crate — a pure-Rust userspace implementation of
 WireGuard's cryptography (`src/core/tunnel.rs`).
 
-Unlike a typical "three programs talking over HTTP" web app, RustVPN's shape
-is fundamentally different: it's **one process that sits between your OS's
+One clarification before going further, because it trips people up: RustVPN is
+a **client-side, full-tunnel VPN**, the kind you use to hide your traffic from
+a network you don't trust. That is a different thing from a **mesh VPN** like
+Tailscale or plain WireGuard peer-to-peer, whose job is to let your own
+machines reach each other across NATs. RustVPN has nothing to do with the
+Tailscale setup used elsewhere for remote access to a home NAS — the two solve
+opposite problems (get *out* through an untrusted network vs. get *in* to your
+own devices) and share no code.
+
+Unlike a typical "three programs talking over HTTP" web app, RustVPN's shape is
+fundamentally different: it's **one process that sits between your OS's
 network stack and the internet**, doing per-packet encryption in a tight
 loop. That single fact — operating below the application layer, on raw IP
 packets — drives almost every design decision in this codebase.
@@ -328,17 +337,12 @@ device sees literally every packet leaving the machine, DNS included:
   only opaque UDP traffic to the VPN server's IP, never the domain names
   inside.
 
-Interestingly, `src/dns/resolver.rs` implements a *third*, more elaborate
-technique — **DNS-over-HTTPS (DoH)**, which disguises DNS queries as normal
-HTTPS traffic to a resolver like Cloudflare's `1.1.1.1`, using the
-`hickory-resolver` crate. It's fully implemented and documented but,
-per this project's `docs/RoadMap.md`, it's **not wired into the live
-packet path** — since DNS already rides inside the encrypted tunnel, a
-second layer of DNS-specific encryption on top would be redundant for this
-project's threat model. It's a good example of a codebase keeping a
-fully-built, tested feature (see `tests/dns_intercept_tests.rs`) *dormant*
-rather than deleting it, in case requirements change (e.g. split-tunnel
-modes where DNS wouldn't ride the tunnel).
+`src/dns/resolver.rs` implements a *third*, more elaborate technique —
+**DNS-over-HTTPS (DoH)**, which disguises DNS queries as normal HTTPS traffic
+to a resolver like Cloudflare's `1.1.1.1`, using the `hickory-resolver` crate.
+It is fully implemented, but it is deliberately **not wired into the live
+packet path**, and the reasoning behind that decision is worth a section of
+its own — see §9.1.
 
 ### 2.8 The WireGuard Protocol and Its Cryptography
 
@@ -684,6 +688,131 @@ attack surface *after* startup, not just *before* it, is the more advanced
 half of this lesson — most beginner security advice stops at "check
 privileges once at the door."
 
+### 4.3 The Rejected Design: Why Not `setuid()`?
+
+The obvious textbook answer to "a program needs root only briefly" is
+`setuid()`: start as root, do the privileged work, then permanently drop to
+the invoking user's UID. Every OS-security course teaches it, and it is what
+this project's original design specified. It was evaluated here and
+**rejected**, and understanding why is more instructive than the technique
+itself.
+
+The problem is a mismatch between when the privilege is needed and when
+`setuid()` would have run. `setuid()` is a one-way door: once the process
+drops to an unprivileged UID, it cannot get back. That is fine if the
+privileged work happens *once, at startup*. But in RustVPN, it doesn't. Trace
+the `Connect` handler in `src/core/controller.rs`: every single connect —
+the first one, and every auto-reconnect after a dropped tunnel — calls
+`platform.create_tun()`, which needs `CAP_NET_ADMIN`, and (if the kill switch
+is on) `ks.enable()`, which shells out to `iptables` and needs it too. A
+`setuid()` after the first successful connect would have worked exactly once
+and then broken every reconnect, in a way that only shows up minutes or hours
+into a session — the worst possible failure shape.
+
+So the design question was reframed. The goal was never "drop to an
+unprivileged UID"; the goal was "hold as little power as possible while still
+being able to make TUN devices." Those are different, and Linux capabilities
+(§4.1) answer the second one directly: `minimize_capabilities()` keeps
+`CAP_NET_ADMIN` indefinitely — because it is genuinely needed indefinitely —
+and throws away everything else, permanently. The process stays UID 0, but a
+UID 0 that has been stripped of ~40 of root's ~41 powers is a far smaller
+thing than the word "root" suggests.
+
+The general lesson: **when the standard hardening technique doesn't fit the
+program's lifecycle, don't bend the lifecycle to fit the technique.** Work
+out what property you actually wanted from it and find a mechanism that
+delivers that property under your real constraints.
+
+### 4.4 Drop Privilege *Before* Parsing Untrusted Input
+
+The ordering in `main.rs` is the whole point of the exercise, and it is easy
+to get subtly wrong:
+
+```
+check_privileges()          <- confirm we have what we need
+minimize_capabilities()     <- throw away everything else
+VpnConfig::load()           <- FIRST touch of user-controlled data
+ServerManager::new()        <- parses resources/servers.toml
+VpnApp::run()               <- GUI; kicks off the update-check HTTP request
+```
+
+Everything below the second line runs with a reduced capability set. That
+line placement is doing real work, because everything below it is *attack
+surface*:
+
+- `VpnConfig::load()` runs a TOML parser over a file on disk.
+- `ServerManager::new()` runs the same parser over the server list.
+- The update check (`src/update.rs`) makes an HTTPS request to
+  `https://api.github.com/repos/Logan-0/VPN/releases/latest` and deserializes
+  whatever JSON comes back.
+- The GUI drags in Iced, `wgpu`, `winit`, and a font stack — a very large
+  amount of third-party code handling untrusted glyph and image data.
+
+None of that is code this project wrote, and any of it could in principle
+contain a memory-safety or logic bug. The question hardening asks is not
+"could there be a bug?" (assume yes) but "**what is the blast radius when
+there is?**" Before `minimize_capabilities()`, a hypothetical exploit in the
+TOML parser inherits full root: `CAP_DAC_OVERRIDE` to read any file on the
+system including `/etc/shadow`, `CAP_SYS_ADMIN` to mount filesystems,
+`CAP_KILL` to signal any process, `CAP_SYS_MODULE` to load a kernel module.
+After it, that same exploit gets `CAP_NET_ADMIN` and nothing else — still
+serious (it can manipulate network interfaces) but bounded, and specifically
+unable to do the things that turn a compromise into persistence.
+
+Two implementation details in `src/privilege.rs` are worth reading closely:
+
+```rust
+for set in [CapSet::Effective, CapSet::Permitted, CapSet::Inheritable,
+            CapSet::Ambient, CapSet::Bounding] {
+```
+
+**Dropping from the `Bounding` set is the step that makes this permanent.**
+The bounding set is a ceiling: a capability absent from it can never be
+re-acquired by this process or by anything it `exec()`s, even via a setuid
+binary. Dropping only the effective set would be theatre — the capability
+would still be sitting in the permitted set waiting to be raised back. The
+comment in the code notes the ordering rationale too: `Bounding` is dropped
+last, because once the ceiling comes down the other sets can't be adjusted
+upward, so reducing the others first keeps the intermediate states coherent
+if a drop fails partway through.
+
+```rust
+for cap in current.difference(&keep) {
+    if let Err(e) = caps::drop(None, set, *cap) { tracing::warn!(...); }
+}
+```
+
+Note the **allowlist** shape: the code computes "everything I currently hold,
+minus the one thing I want to keep" and drops that. A denylist — "drop
+`CAP_SYS_ADMIN`, `CAP_DAC_OVERRIDE`, ..." — would silently fail to protect
+against any capability added to Linux in a future kernel. Same
+default-deny instinct as the kill switch's `DROP` rule in §2.6, applied to a
+completely different resource. And note the failure handling: a failed drop
+is logged at `warn` and the loop continues, because a partially hardened
+process is strictly better than aborting startup and giving the user a VPN
+client that doesn't run. The function ends with a sanity check that
+`CAP_NET_ADMIN` actually survived, so the *functional* requirement is
+verified even though the *hardening* is best-effort.
+
+### 4.5 `capture_invoking_user`: An Honest Leftover
+
+`privilege::capture_invoking_user()` reads `$SUDO_UID` and `$SUDO_GID` at the
+top of `main` and returns them. Nothing in the current codebase consumes the
+result. It exists because it was the first half of the `setuid()` design from
+§4.3 — you cannot drop to the invoking user without first knowing who that
+is, and you have to capture it early because the environment can be mutated
+later.
+
+It is called out here rather than quietly ignored because reading a real
+codebase means routinely finding things like this: a hook built for a plan
+that was later abandoned. The useful skill is recognising them for what they
+are. This one is harmless (two `getenv` calls and a parse, no side effects),
+its doc comment is accurate about *what* it does, and the surrounding design
+it was built for is documented as rejected — which is the honest state to
+leave such a thing in. The alternative failure mode is far worse: a leftover
+whose comments still describe the abandoned plan as though it were the
+current one, quietly teaching every future reader something false.
+
 ---
 
 ## 5. The Packet Loop: RustVPN's Steady-State Heart
@@ -799,6 +928,96 @@ to the TUN device. This ordering matters: filtering has to happen on the
 *plaintext* packet, because once a packet is encrypted, RustVPN itself has
 no way to know what's inside it (which is, after all, the entire point of
 encryption).
+
+### 5.5 Anatomy of a Synthesised DNS Block
+
+`try_block_dns_query` is worth walking end to end, because it is the one
+place in the codebase that both *parses* and *forges* a network protocol, and
+because the design has a property most ad-blockers don't: it never talks to
+anything. The whole transaction happens inside one function, between a
+`read()` and a `write()` on the same file descriptor.
+
+**The gauntlet.** The function is a series of cheap rejections, ordered so the
+common case (a packet that is not a blockable DNS query — i.e. almost every
+packet) falls out as early as possible:
+
+1. Is it IPv4? (`packet[0] >> 4 != 4` → give up). Note what this means: DNS
+   over IPv6 is not intercepted at all.
+2. Is the IP protocol number UDP (17)? TCP DNS falls straight through.
+3. Is the destination port 53?
+4. Does the DNS header say `QDCOUNT == 1` and `QR == 0`? Multi-question
+   queries are vanishingly rare in practice, and handling them would mean
+   building multi-answer replies; the code declines rather than half-supports.
+5. Is `QCLASS == IN` and `QTYPE` either `A` or `AAAA`? Blocking `TXT`, `MX`,
+   or `SRV` risks breaking applications that legitimately query for them —
+   and blocking the address lookup is already sufficient to stop the
+   connection.
+6. Finally, is the decoded QNAME on the blocklist?
+
+Every one of those is a `return None`, meaning "not my business, hand this
+packet to the tunnel unmodified." The default is always *pass*.
+
+**Parent-label matching.** Step 6 delegates to `DnsFilter::is_blocked`, and
+its parent walk is what makes a blocklist of a few thousand entries useful:
+
+```rust
+let mut remaining = normalized;
+while let Some(pos) = remaining.find('.') {
+    remaining = &remaining[pos + 1..];
+    if self.blocked_domains.contains(remaining) { return true; }
+}
+```
+
+A query for `pixel.eu-3.tracking.doubleclick.net` is checked as itself, then
+`eu-3.tracking.doubleclick.net`, then `tracking.doubleclick.net`, then
+`doubleclick.net` — which hits. Without this, a blocklist would have to
+enumerate every subdomain an ad network ever invents, and ad networks invent
+them faster than blocklists can be updated. Blocking a domain therefore
+blocks its entire subtree, which is what a human means by "block
+doubleclick.net" and is why the entries can stay short. It is a `HashSet`
+lookup per label, so the cost is a handful of hashes on a string that is at
+most 253 bytes — negligible next to the packet's encryption.
+
+**Forging the reply.** If the name is blocked, `build_dns_block_reply` builds
+an answer by *reusing the query's own bytes* up through the question section
+— legitimate, because a well-formed DNS response echoes the question
+verbatim, and it means the transaction ID (which the client will match
+against) is preserved for free. Then it patches the header:
+
+```rust
+let original_rd = reply[2] & 0x01;
+reply[2] = 0x80 | original_rd;   // QR=1 (this is a response), RD preserved
+reply[3] = 0x80;                 // RA=1, RCODE=0 (no error)
+reply[6] = 0; reply[7] = 1;      // ANCOUNT = 1
+```
+
+and appends one answer record: name `0xC00C` (a compression pointer back to
+offset 12, the standard idiom for "same name as the question"), the original
+qtype, class `IN`, a 60-second TTL, and RDATA of `0.0.0.0` for an `A` query
+or `::` for `AAAA`.
+
+Several deliberate choices are packed in there. `RCODE = 0` with an address
+of `0.0.0.0` rather than `RCODE = 3` (`NXDOMAIN`) — the client gets a
+successful lookup pointing at an unroutable address, so its connection
+attempt fails fast and locally instead of triggering the retry-and-fallback
+behaviour some resolvers apply to `NXDOMAIN`. `RA = 1` claims recursion is
+available, so the client doesn't decide this resolver is limited and retry
+the whole query over TCP — which would arrive on port 53/TCP and sail
+straight past step 2 of the gauntlet. And the short 60-second TTL keeps a
+blocked answer from being cached for hours, so toggling DNS filtering off in
+the GUI takes effect on a human timescale.
+
+**Getting it back to the client.** The reply is then wrapped in a fresh UDP
+segment and IPv4 packet with the source and destination **swapped** —
+`build_udp_segment(dst_port, src_port, ...)` and
+`build_ipv4_packet(&dst_ip, &src_ip, ...)`. Both checksums are recomputed
+from scratch (§2.5); a wrong checksum means the kernel silently drops the
+packet and the user experiences a mysterious DNS timeout rather than a block.
+The finished packet is written straight back into the TUN device, and *that
+is the trick*: the TUN device is bidirectional, so writing to it injects a
+packet into the kernel as though it had arrived from the network. The
+client's resolver sees a perfectly ordinary answer to the query it just sent.
+It has no way to tell the difference, and no packet ever left the machine.
 
 ---
 
@@ -1027,13 +1246,116 @@ something above:
   block at the top of `Connect`) before starting a new one, so the intent is
   that overlapping attempts collapse to a single live session.
 - **The DNS-over-HTTPS resolver is built but dormant.** `src/dns/resolver.rs` is
-  fully implemented and tested yet never called from the live packet path. As
-  `docs/RoadMap.md` explains, it is held in reserve for a future feature — a
-  split-tunnel or "DNS-only" mode — where resolving DNS ourselves would add
-  value over relying on the WireGuard tunnel alone.
+  fully implemented yet never called from the live packet path. This was a
+  judgment call, not an oversight; §9.1 works through it.
 - **Least privilege: only `CAP_NET_ADMIN` is kept.** RustVPN retains a single
   Linux capability, `CAP_NET_ADMIN`, and deliberately drops the forty-some
   others. That capability is still powerful — a process holding only it can
   create raw sockets and manipulate arbitrary network interfaces — so if
   packet-parsing code were compromised, the attack surface is bounded by what
   `CAP_NET_ADMIN` alone permits, not full root.
+
+### 9.1 Declining Defense in Depth: The DoH Decision
+
+"Defense in depth" — layering independent protections so no single failure is
+fatal — is close to unquestioned in security engineering, and questioning it
+is uncomfortable. RustVPN's handling of DNS-over-HTTPS is a worked example of
+doing so deliberately.
+
+The setup: `src/dns/resolver.rs` contains a complete DoH resolver built on
+`hickory-resolver`. The original design called for routing the client's DNS
+queries through it. It is never called from the live packet path, and wiring
+it in is not planned.
+
+**The argument for wiring it in** is the standard one. DNS is historically the
+leakiest part of a "private" connection. A second, independent layer of
+DNS-specific encryption means that if the tunnel layer ever fails, hostnames
+are still protected.
+
+**The argument against** starts by asking what the extra layer actually buys
+*here*. Work out who can see what. A DNS query leaves the machine through the
+TUN device like every other packet, gets encapsulated by
+`Tunnel::encapsulate`, and goes out as ChaCha20-Poly1305 ciphertext inside a
+UDP datagram addressed to the VPN server. The ISP — the adversary DoH is
+designed to defeat — sees opaque bytes to one IP address. It cannot see port
+53, cannot see the QNAME, cannot even tell the packet is DNS. Layering DoH on
+top would encrypt the query a second time inside that tunnel. Against the ISP,
+the marginal benefit is zero: the hostname was already invisible.
+
+Against a *different* adversary — the VPN server operator, who terminates the
+tunnel and does see plaintext DNS — DoH would genuinely help. But note that
+this doesn't remove trust, it relocates it: you would now be trusting the DoH
+provider (Cloudflare, say) instead of the VPN server operator with the exact
+same list of hostnames. For a client whose whole premise is "I chose to route
+my traffic through this server," that is a trade, not a gain.
+
+**And the cost isn't zero.** This is the part that decides it. DoH resolves
+DNS over an HTTPS connection, which means DNS resolution acquires a new
+dependency and a new failure mode: TCP connection setup, TLS handshake, HTTP
+request/response, all with their own timeouts, to a host that must itself be
+reachable. If the DoH endpoint is slow, rate-limits, or is blocked by the
+network you are on, *every name lookup on the machine stalls* — and it stalls
+inside a code path that currently cannot fail at all, because today allowed
+DNS queries are simply forwarded as ordinary packets. A tunnel that works but
+whose DNS hangs looks, to a user, exactly like a broken VPN.
+
+So the calculus is: **negligible benefit against the stated threat model, a
+lateral move against a secondary one, and a new way for the product's core
+function to break.** Defense in depth is a heuristic for allocating effort,
+not a law. A layer that adds a failure mode has to earn its place, and this
+one didn't. The resolver stays in the tree, tested and available to callers
+that want it, because a future split-tunnel mode — where DNS would *not* ride
+inside the tunnel and the analysis above would invert — is the scenario in
+which it becomes valuable.
+
+The transferable habit: when someone proposes a security layer, ask three
+questions in order. *Which adversary does it stop?* *Was that adversary
+already stopped by something else?* *What new ways can the system now fail?*
+If the answers are "one we'd already handled" and "several," the layer is
+costing more than it protects.
+
+### 9.2 Placeholder Infrastructure That Actually Exercises the Code
+
+`resources/servers.toml` ships nine servers, none of which exist. How the
+placeholders were constructed is a small design decision with an outsized
+payoff for testing.
+
+The lazy version of a placeholder is a string like `"CHANGEME"` or
+`"your-server-here:51820"`. It documents intent and nothing else — the moment
+the code touches it, base64 decoding fails and everything downstream is
+untested. The placeholder is a wall, and every line of code behind it is dark.
+
+RustVPN's placeholders are built to be *valid where validity is cheap*:
+
+- `server_public_key_base64` holds 32 cryptographically random bytes,
+  base64-encoded. These are structurally indistinguishable from real
+  WireGuard X25519 public keys, so `tunnel::base64_to_key` parses them
+  successfully and `Tunnel::connect` accepts them.
+- `server_endpoint_address` uses addresses from `203.0.113.0/24`, which is
+  RFC 5737 TEST-NET-1 — a range reserved for documentation and guaranteed
+  never to be routed on the public internet. `"203.0.113.1:51820"` parses
+  into a `SocketAddr` like any other address, but a stray packet sent to it
+  cannot reach a real machine, so a misconfiguration can't accidentally
+  connect a user to a stranger's server.
+
+The result is that clicking Connect executes the *entire* pipeline: the server
+entry is parsed, the endpoint resolves, the kill switch installs its iptables
+chain (§2.6), the TUN device is created and the routing table rewritten
+(§2.2), the packet loop spawns, and the Noise handshake is initiated. Only the
+final step fails, and it fails for exactly one reason — no machine on earth
+holds the private key matching that random public key, so no handshake
+response ever comes back, and `reconnect_manager` starts its backoff ladder
+(§6). Every layer except the last is genuinely exercised, on a developer
+machine, with no VPN infrastructure to rent or run.
+
+The principle generalises well beyond VPNs: **make your fake data
+structurally real and only semantically fake.** A test fixture that fails at
+the parser tells you the parser rejects garbage. A fixture that flows all the
+way to the point where it *must* fail tells you everything in between works —
+and it makes the eventual failure informative, since "handshake timeout" is a
+precise, expected diagnosis rather than a generic "invalid key."
+
+The same instinct shows up in `tests/`: `dns_intercept_tests.rs` hand-builds
+raw IPv4/UDP/DNS byte buffers rather than mocking the parser out, so the real
+byte-offset arithmetic from §2.5 is under test even though no packet ever
+crosses a real network.
