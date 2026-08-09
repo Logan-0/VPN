@@ -247,7 +247,7 @@ This creates a `.deb` file in `target/debian/` that includes:
 - The compiled binary
 - Automatic capability setup via post-install script
 - Desktop entry for application launcher
-- Icon files
+  (uses the stock `network-vpn` theme icon; no icon files are shipped)
 
 #### Installing from .deb
 
@@ -263,7 +263,7 @@ The .deb package automatically:
 - Installs the binary to `/usr/bin/rust-vpn`
 - Sets CAP_NET_ADMIN capability on the binary
 - Creates a desktop entry in `/usr/share/applications/`
-- Installs icons to `/usr/share/icons/`
+- Uses the stock `network-vpn` theme icon (none is bundled)
 
 #### Running After .deb Installation
 

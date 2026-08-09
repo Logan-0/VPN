@@ -1,3 +1,6 @@
+# NOT USED BY THE BUILD. `cargo deb` reads [package.metadata.deb] from
+# Cargo.toml, which is canonical; this file is kept only as a reference copy.
+# Any change here must be mirrored into Cargo.toml to take effect.
 [package.metadata.deb]
 name = "rust-vpn"
 maintainer = "RustVPN Team <support@rustvpn.example>"
@@ -13,7 +16,7 @@ section = "net"
 priority = "optional"
 assets = [
     ["target/release/rust-vpn", "usr/bin/rust-vpn", "755"],
-    ["README.md", "usr/share/doc/rust-vpn/README", "644"],
+    ["docs/README.md", "usr/share/doc/rust-vpn/README", "644"],
 ]
 conflicts = ["openvpn", "wireguard"]
 maintainer-scripts = "debian/"

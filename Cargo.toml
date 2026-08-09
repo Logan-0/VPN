@@ -21,7 +21,7 @@ section = "net"
 priority = "optional"
 assets = [
     ["target/release/rust-vpn", "usr/bin/rust-vpn", "755"],
-    ["README.md", "usr/share/doc/rust-vpn/README", "644"],
+    ["docs/README.md", "usr/share/doc/rust-vpn/README", "644"],
     ["debian/rust-vpn.desktop", "usr/share/applications/rust-vpn.desktop", "644"],
 ]
 maintainer-scripts = "debian/"
@@ -30,7 +30,7 @@ maintainer-scripts = "debian/"
 # Async runtime — trimmed from "full" to what's actually used (runtime
 # construction, select!/test/main macros, mpsc/watch channels, sleep/interval,
 # UdpSocket, and task::spawn_blocking). Add features back if `cargo build`
-# reports a missing one; see OptimizationExecutionSpec.md #3.
+# reports a missing one; see Projects/Guidelines/OptimizationSpec.md.
 tokio = { version = "1.41", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"] }
 
 # WireGuard protocol
@@ -78,13 +78,13 @@ mockall = "0.13"
 [profile.release]
 opt-level = 3       # Favor packet-loop throughput/latency over binary size
                     # (was "z" — this is a per-packet crypto/routing hot path,
-                    # not a size-constrained embedded target; see OptimizationExecutionSpec.md #1)
+                    # not a size-constrained embedded target; see Projects/Guidelines/OptimizationSpec.md)
 lto = true          # Link-time optimization
 codegen-units = 1   # Better optimization
 strip = true        # Strip symbols
 # panic = "abort" intentionally NOT set: KillSwitch/LinuxPlatform/Tunnel all
 # rely on Drop to remove firewall rules / TUN devices if something goes wrong.
 # "abort" skips unwinding, so those Drop impls would never run on a panic,
-# defeating that safety net (see ErrorHandlingExecutionSpec.md P1). The
+# defeating that safety net (see Projects/Guidelines/ErrorHandlingSpec.md). The
 # default `panic = "unwind"` costs a small amount of binary size in exchange
 # for that cleanup guarantee actually firing.

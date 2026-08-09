@@ -2,7 +2,7 @@
 Name=RustVPN
 Comment=Secure WireGuard VPN client with kill switch and DNS filtering
 Exec=rust-vpn
-Icon=rust-vpn
+Icon=network-vpn
 Terminal=false
 Type=Application
 Categories=Network;VPN;
