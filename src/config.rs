@@ -415,7 +415,7 @@ impl VpnConfig {
         // We only store the private key bytes; the public key is re-derived
         // each time from the private key inside the WireGuard handshake.
         use boringtun::x25519::StaticSecret;
-        let private = StaticSecret::random_from_rng(rand::thread_rng());
+        let private = StaticSecret::random_from_rng(rand_core::OsRng);
         let key_bytes: [u8; 32] = private.to_bytes();
 
         // Persist the new key immediately so the same identity survives restarts.

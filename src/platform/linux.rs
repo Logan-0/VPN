@@ -23,10 +23,10 @@
 use anyhow::{Context, Result};
 use std::net::IpAddr;
 use std::process::Command;
-use tun::Device as TunDevice;
+use tun::{AbstractDevice, Device as TunDevice};
 
 /// WireGuard standard MTU (accounts for WireGuard overhead on a 1500-byte link)
-const WIREGUARD_MTU: u32 = 1420;
+const WIREGUARD_MTU: u16 = 1420;
 
 /// Linux Platform-Specific Networking Operations
 ///
@@ -62,7 +62,7 @@ pub struct LinuxPlatform {
     tun_device_name: Option<String>,
 
     /// The tun::platform::Device handle (owns the file descriptor)
-    tun_device: Option<tun::platform::Device>,
+    tun_device: Option<TunDevice>,
 
     /// Original default gateway IP, saved so we can restore routing on cleanup
     original_gateway: Option<String>,
@@ -134,7 +134,7 @@ impl LinuxPlatform {
         tun_ip: (u8, u8, u8, u8),
         tun_netmask: (u8, u8, u8, u8),
         vpn_server_ip: IpAddr,
-    ) -> Result<&mut tun::platform::Device> {
+    ) -> Result<&mut TunDevice> {
         tracing::info!(
             "Creating TUN device with IP {}.{}.{}.{}",
             tun_ip.0,
@@ -156,14 +156,14 @@ impl LinuxPlatform {
         config
             .address(tun_ip)
             .netmask(tun_netmask)
-            .mtu(WIREGUARD_MTU as i32)
+            .mtu(WIREGUARD_MTU)
             .up();
 
         let device = tun::create(&config)
             .context("Failed to create TUN device (do you have root / CAP_NET_ADMIN?)")?;
 
         let dev_name = device
-            .name()
+            .tun_name()
             .context("Failed to get TUN device name")?
             .to_string();
 
@@ -201,7 +201,7 @@ impl LinuxPlatform {
     /// The device implements `std::io::Read` and `std::io::Write`:
     /// - `read()` returns packets destined for the VPN (outgoing)
     /// - `write()` injects packets into the local network stack (incoming)
-    pub fn get_tun_device(&mut self) -> Option<&mut tun::platform::Device> {
+    pub fn get_tun_device(&mut self) -> Option<&mut TunDevice> {
         self.tun_device.as_mut()
     }
 

@@ -201,8 +201,7 @@ impl Tunnel {
             Some(KEEPALIVE_INTERVAL), // Send keepalive every 25s
             0,                        // Index (managed by boringtun)
             None,                     // No rate limiter
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to create WireGuard tunnel: {}", e))?;
+        );
 
         self.wireguard_tunnel = Some(Box::new(tunn));
 
@@ -393,7 +392,7 @@ impl Drop for Tunnel {
 pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
     use boringtun::x25519::{PublicKey, StaticSecret};
 
-    let private = StaticSecret::random_from_rng(rand::thread_rng());
+    let private = StaticSecret::random_from_rng(rand_core::OsRng);
     let public = PublicKey::from(&private);
 
     (private.to_bytes(), public.to_bytes())

@@ -409,23 +409,17 @@ impl VpnApp {
         .width(Length::Fill);
 
         // ── Settings checkboxes ─────────────────────────────────────────
-        let kill_switch_cb = checkbox(
-            "Kill Switch (blocks traffic when VPN disconnected)",
-            self.config.kill_switch_protection_enabled,
-        )
-        .on_toggle(Message::KillSwitchToggled);
+        let kill_switch_cb = checkbox(self.config.kill_switch_protection_enabled)
+            .label("Kill Switch (blocks traffic when VPN disconnected)")
+            .on_toggle(Message::KillSwitchToggled);
 
-        let auto_reconnect_cb = checkbox(
-            "Auto-reconnect (automatically reconnect on failure)",
-            self.config.auto_reconnect_enabled,
-        )
-        .on_toggle(Message::AutoReconnectToggled);
+        let auto_reconnect_cb = checkbox(self.config.auto_reconnect_enabled)
+            .label("Auto-reconnect (automatically reconnect on failure)")
+            .on_toggle(Message::AutoReconnectToggled);
 
-        let dns_filtering_cb = checkbox(
-            "DNS Filtering (block ads and malware)",
-            self.config.dns_filtering_protection_enabled,
-        )
-        .on_toggle(Message::DnsFilteringToggled);
+        let dns_filtering_cb = checkbox(self.config.dns_filtering_protection_enabled)
+            .label("DNS Filtering (block ads and malware)")
+            .on_toggle(Message::DnsFilteringToggled);
 
         // ── Assemble layout ─────────────────────────────────────────────
         //
@@ -603,11 +597,12 @@ impl VpnApp {
     /// 7. `subscription()` polls the VPN core for async events.
     /// 8. Loop continues until the window is closed.
     pub fn run() {
-        iced::application(VpnApp::title, VpnApp::update, VpnApp::view)
+        iced::application(VpnApp::new, VpnApp::update, VpnApp::view)
+            .title(VpnApp::title)
             .subscription(VpnApp::subscription)
             .theme(VpnApp::theme)
             .window_size(iced::Size::new(500.0, 650.0))
-            .run_with(VpnApp::new)
+            .run()
             .expect("Failed to run Iced application");
     }
 }

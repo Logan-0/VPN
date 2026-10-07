@@ -21,9 +21,12 @@
 //! It does not handle DNS packet parsing (delegated to intercept module).
 
 use anyhow::{Context, Result};
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
-use std::net::{IpAddr, SocketAddr};
+use hickory_resolver::config::{
+    ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts, CLOUDFLARE, GOOGLE,
+};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::TokioResolver;
+use std::net::IpAddr;
 
 /// DNS-over-HTTPS/TLS Resolver
 ///
@@ -78,7 +81,7 @@ use std::net::{IpAddr, SocketAddr};
 /// 5. No DNS queries bypass the VPN (no leaks)
 pub struct DnsResolver {
     /// The underlying async resolver from hickory-resolver
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
 
     /// Which mode this resolver is operating in (for logging / inspection)
     mode: ResolverMode,
@@ -111,8 +114,11 @@ impl DnsResolver {
 
     /// Creates a resolver using Cloudflare DNS-over-HTTPS (1.1.1.1).
     pub fn cloudflare_doh() -> Result<Self> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::cloudflare_https(), ResolverOpts::default());
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::https(&CLOUDFLARE),
+            TokioRuntimeProvider::default(),
+        )
+        .build()?;
         tracing::info!("DNS resolver initialized: Cloudflare DoH (1.1.1.1)");
         Ok(Self {
             resolver,
@@ -122,8 +128,11 @@ impl DnsResolver {
 
     /// Creates a resolver using Google DNS-over-HTTPS (8.8.8.8).
     pub fn google_doh() -> Result<Self> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::google_https(), ResolverOpts::default());
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::https(&GOOGLE),
+            TokioRuntimeProvider::default(),
+        )
+        .build()?;
         tracing::info!("DNS resolver initialized: Google DoH (8.8.8.8)");
         Ok(Self {
             resolver,
@@ -143,13 +152,11 @@ impl DnsResolver {
     ///
     /// * `dns_ip` - IP address of the custom DNS server (e.g., 192.168.1.53)
     pub fn custom(dns_ip: IpAddr) -> Result<Self> {
-        let socket = SocketAddr::new(dns_ip, 53);
-        let name_server = NameServerConfig::new(socket, Protocol::Udp);
-
-        let mut config = ResolverConfig::new();
-        config.add_name_server(name_server);
-
-        let resolver = TokioAsyncResolver::tokio(config, ResolverOpts::default());
+        let name_server = NameServerConfig::new(dns_ip, true, vec![ConnectionConfig::udp()]);
+        let config = ResolverConfig::from_name_servers(vec![name_server]);
+        let resolver = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .with_options(ResolverOpts::default())
+            .build()?;
         tracing::info!("DNS resolver initialized: custom server {}", dns_ip);
         Ok(Self {
             resolver,
