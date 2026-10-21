@@ -184,13 +184,18 @@ impl VpnApp {
     /// returns the initial model and an optional startup command (Task).
     fn new() -> (Self, Task<Message>) {
         let config = VpnConfig::load().unwrap_or_default();
-        let server_manager = ServerManager::new().unwrap();
-        let servers: Vec<ServerOption> = server_manager
-            .get_servers()
-            .iter()
-            .cloned()
-            .map(ServerOption)
-            .collect();
+        let servers: Vec<ServerOption> = match ServerManager::new() {
+            Ok(server_manager) => server_manager
+                .get_servers()
+                .iter()
+                .cloned()
+                .map(ServerOption)
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to load server list, starting with none: {}", e);
+                Vec::new()
+            }
+        };
 
         // Resolve the saved server selection to an actual ServerOption
         let selected_server = config
