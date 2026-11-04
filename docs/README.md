@@ -2,7 +2,7 @@
 
 **Project Status**: Stable (v1.0.0)
 
-**Version**: 1.0.0 (documented release; see `Projects/Guidelines/VersioningSpec.md`)
+**Version**: 1.0.0 (documented release; see `Guidelines/VersioningSpec.md`)
 
 ## Documentation
 
